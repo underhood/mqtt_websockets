@@ -280,6 +280,31 @@ int ws_client_start_handshake(ws_client *client)
     return WS_CLIENT_PROTOCOL_ERROR; \
 }
 
+string_hash calc_string_hash(const char* str)
+{
+    string_hash hash = 703441; // random prime
+    while (*str) {
+        hash *= 184649 /* another random prime */ * *str++;
+    }
+    return hash;
+}
+
+struct http_header *find_header_by_key(ws_client *client, const char* key)
+{
+    string_hash hash = calc_string_hash(key);
+    struct http_header *ptr = client->hs.headers;
+    while (ptr) {
+        if (ptr->key_hash == hash) {
+            if (!strcmp(ptr->key, key))
+                return ptr;
+            else
+                WARN("Hash collision. You might want to implement better calc_string_hash if you see this often.");
+        }
+        ptr = ptr->next;
+    }
+    return NULL;
+}
+
 int ws_client_parse_handshake_resp(ws_client *client)
 {
     char buf[HTTP_SC_LENGTH];
@@ -365,6 +390,8 @@ int ws_client_parse_handshake_resp(ws_client *client)
 
             for (int i = 0; hdr->key[i]; i++)
                 hdr->key[i] = tolower(hdr->key[i]);
+
+            hdr->key_hash = calc_string_hash(hdr->key);
 
 //            DEBUG("HTTP header \"%s\" received. Value \"%s\"", hdr->key, hdr->value);
 

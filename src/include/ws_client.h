@@ -70,8 +70,11 @@ struct ws_op_close_payload {
     char *reason;
 };
 
+typedef uint32_t string_hash;
+
 struct http_header {
     char *key;
+    string_hash key_hash;
     char *value;
     struct http_header *next;
 };
