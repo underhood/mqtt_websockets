@@ -1042,6 +1042,24 @@ int mqtt_wss_publish_pid(mqtt_wss_client client, const char *topic, const void *
     return rc;
 }
 
+#define MQTT_MSG_RESERVE 100 // this is a hack
+int mqtt_wss_able_to_send(mqtt_wss_client client, size_t bytes)
+{
+    if ((size_t)(client->mqtt_client->mq.mem_end - client->mqtt_client->mq.mem_start) <= bytes + MQTT_MSG_RESERVE)
+        return MQTT_WSS_ERR_TX_BUF_TOO_SMALL;
+    if (client->mqtt_client->mq.curr_sz < bytes + MQTT_MSG_RESERVE) {
+        MQTT_PAL_MUTEX_LOCK(&client->mqtt_client->mutex);
+        mqtt_mq_clean(&client->mqtt_client->mq);
+        if (client->mqtt_client->mq.curr_sz < (bytes + MQTT_MSG_RESERVE)) {
+            MQTT_PAL_MUTEX_UNLOCK(&client->mqtt_client->mutex);
+            return MQTT_WSS_ERR_CANT_SEND_NOW;
+        }
+        MQTT_PAL_MUTEX_UNLOCK(&client->mqtt_client->mutex);
+        return MQTT_WSS_OK;
+    }
+    return MQTT_WSS_OK;
+}
+
 int mqtt_wss_publish(mqtt_wss_client client, const char *topic, const void *msg, int msg_len, uint8_t publish_flags)
 {
     uint16_t pid;

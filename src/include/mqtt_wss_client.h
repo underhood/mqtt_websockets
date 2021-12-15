@@ -34,6 +34,8 @@
 #define MQTT_WSS_ERR_TX_BUF_TOO_SMALL  -4
 #define MQTT_WSS_ERR_RX_BUF_TOO_SMALL  -5
 
+#define MQTT_WSS_ERR_CANT_SEND_NOW -6
+
 typedef struct mqtt_wss_client_struct *mqtt_wss_client;
 
 /* Creates new instance of MQTT over WSS. Doesn't start connection.
