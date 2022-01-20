@@ -14,6 +14,7 @@
 
 #include "mqtt_wss_client.h"
 #include "mqtt.h"
+#include "mqtt_ng.h"
 #include "ws_client.h"
 #include "common_internal.h"
 
@@ -868,6 +869,11 @@ static inline long int t_till_next_keepalive_ms(struct mqtt_client *mqtt)
     long int next_mqtt_keep_alive = (mqtt->time_of_last_send * SEC_TO_MSEC)
         + (mqtt->keep_alive * (SEC_TO_MSEC * 0.75 /* SEND IN ADVANCE */));
     return(next_mqtt_keep_alive - (MQTT_PAL_TIME() * SEC_TO_MSEC));
+}
+
+int mqtt_wss_service2(mqtt_wss_client client, int timeout_ms)
+{
+
 }
 
 int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)

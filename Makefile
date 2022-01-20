@@ -35,8 +35,11 @@ $(BUILD_DIR)/mqtt_wss_log.o: src/mqtt_wss_log.c src/include/mqtt_wss_log.h
 $(BUILD_DIR)/mqtt_wss_client.o: src/mqtt_wss_client.c src/include/mqtt_wss_client.h src/include/ws_client.h MQTT-C/include/mqtt.h src/include/common_internal.h
 	$(CC) -o $(BUILD_DIR)/mqtt_wss_client.o -c src/mqtt_wss_client.c $(CFLAGS) $(INCLUDES)
 
-libmqttwebsockets.a: $(BUILD_DIR)/mqtt_wss_client.o $(BUILD_DIR)/ws_client.o c-rbuf/build/ringbuffer.o $(BUILD_DIR)/mqtt.o $(BUILD_DIR)/mqtt_wss_log.o
-	ar rcs libmqttwebsockets.a $(BUILD_DIR)/mqtt_wss_client.o $(BUILD_DIR)/ws_client.o c-rbuf/build/ringbuffer.o $(BUILD_DIR)/mqtt.o $(BUILD_DIR)/mqtt_wss_log.o
+$(BUILD_DIR)/mqtt_ng.o: src/mqtt_ng.c src/include/mqtt_ng.h src/include/common_internal.h
+	$(CC) -o $(BUILD_DIR)/mqtt_ng.o -c src/mqtt_ng.c $(CFLAGS) $(INCLUDES)
+
+libmqttwebsockets.a: $(BUILD_DIR)/mqtt_wss_client.o $(BUILD_DIR)/ws_client.o c-rbuf/build/ringbuffer.o $(BUILD_DIR)/mqtt.o $(BUILD_DIR)/mqtt_wss_log.o $(BUILD_DIR)/mqtt_ng.o
+	ar rcs libmqttwebsockets.a $(BUILD_DIR)/mqtt_wss_client.o $(BUILD_DIR)/ws_client.o c-rbuf/build/ringbuffer.o $(BUILD_DIR)/mqtt.o $(BUILD_DIR)/mqtt_wss_log.o $(BUILD_DIR)/mqtt_ng.o
 
 test: $(BUILD_DIR)/test.o libmqttwebsockets.a
 	$(CC) -o test $(BUILD_DIR)/test.o libmqttwebsockets.a `pkg-config --libs openssl` -lpthread
