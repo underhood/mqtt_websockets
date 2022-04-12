@@ -14,3 +14,5 @@ struct mqtt_connect {
  * @return number of bytes written to output or <= 0 if error in which case contents of output are undefined
  */
 int uint32_to_mqtt_vbi(uint32_t input, char *output);
+
+int mqtt_ng_init();

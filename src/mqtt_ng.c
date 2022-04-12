@@ -24,3 +24,7 @@ int uint32_to_mqtt_vbi(uint32_t input, char *output) {
     }
     return i;
 }
+
+int mqtt_ng_init() {
+    return 0;
+}

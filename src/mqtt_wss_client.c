@@ -98,8 +98,9 @@ struct mqtt_wss_client_struct {
 
     union {
         struct mqtt_c_client* mqtt_c;
-//      struct mqtt5_client* mqtt;
+        struct mqtt_ng_client *mqtt_ctx;
     } mqtt;
+    int internal_mqtt;
 
     int last_ec;
 
@@ -237,7 +238,8 @@ static int mqtt_c_init(mqtt_wss_client client, msg_callback_fnc_t msg_callback) 
 mqtt_wss_client mqtt_wss_new(const char *log_prefix,
                              mqtt_wss_log_callback_t log_callback,
                              msg_callback_fnc_t msg_callback,
-                             void (*puback_callback)(uint16_t packet_id))
+                             void (*puback_callback)(uint16_t packet_id),
+                             int mqtt5)
 {
     mqtt_wss_log_ctx_t log;
 
@@ -258,6 +260,8 @@ mqtt_wss_client mqtt_wss_new(const char *log_prefix,
 
     client->msg_callback = msg_callback;
     client->puback_callback = puback_callback;
+
+    client->internal_mqtt = mqtt5 ? 1 : 0;
 
     client->ws_client = ws_client_new(0, &client->target_host, log);
     if (!client->ws_client) {
@@ -281,9 +285,16 @@ mqtt_wss_client mqtt_wss_new(const char *log_prefix,
 
     client->poll_fds[POLLFD_SOCKET].events = POLLIN;
 
-    if (mqtt_c_init(client, msg_callback)) {
-        mws_error(log, "Error initializing MQTT");
-        goto fail_3;
+    if (client->internal_mqtt) {
+        if (mqtt_ng_init()) {
+            mws_error(log, "Error initializing internal MQTT client");
+            goto fail_3;
+        }
+    } else {
+        if (mqtt_c_init(client, msg_callback)) {
+            mws_error(log, "Error initializing MQTT");
+            goto fail_3;
+        }
     }
 
     return client;
@@ -307,7 +318,8 @@ void mqtt_wss_set_max_buf_size(mqtt_wss_client client, size_t size)
 
 void mqtt_wss_destroy(mqtt_wss_client client)
 {
-    mqtt_c_client_destroy(client->mqtt.mqtt_c);
+    if (!client->internal_mqtt)
+        mqtt_c_client_destroy(client->mqtt.mqtt_c);
 
     close(client->write_notif_pipe[PIPE_WRITE_END]);
     close(client->write_notif_pipe[PIPE_READ_END]);
@@ -674,7 +686,7 @@ int mqtt_wss_connect(mqtt_wss_client client, char *host, int port, struct mqtt_c
     mqtt_flags |= MQTT_CONNECT_CLEAN_SESSION;
 
     struct mqtt_c_client *mqtt_c = client->mqtt.mqtt_c;
-    if (mqtt_flags &= MQTT_CONNECT_CLEAN_SESSION) {
+    if (!client->internal_mqtt && (mqtt_flags &= MQTT_CONNECT_CLEAN_SESSION)) {
         if (mqtt_c->mqtt_buf_max_size && client->last_ec) {
             if (client->last_ec == MQTT_WSS_ERR_TX_BUF_TOO_SMALL) {
                 mws_info(client->log, "Last error was MQTT_WSS_ERR_TX_BUF_TOO_SMALL and buffer growth enabled. Attempting size increase.");
@@ -693,18 +705,20 @@ int mqtt_wss_connect(mqtt_wss_client client, char *host, int port, struct mqtt_c
 
     client->last_ec = 0;
 
-    enum MQTTErrors ret = mqtt_connect(mqtt_c->mqtt_client,
-                                       mqtt_params->clientid,
-                                       mqtt_params->will_topic,
-                                       mqtt_params->will_msg,
-                                       (mqtt_params->will_msg ? mqtt_params->will_msg_len : 0),
-                                       mqtt_params->username,
-                                       mqtt_params->password,
-                                       mqtt_flags,
-                                       (mqtt_params->keep_alive ? mqtt_params->keep_alive : 400));
-    if (ret != MQTT_OK) {
-        mws_error(client->log, "Error with MQTT connect \"%s\"", mqtt_error_str(ret));
-        return 1;
+    if (!client->internal_mqtt) {
+        enum MQTTErrors ret = mqtt_connect(mqtt_c->mqtt_client,
+                                           mqtt_params->clientid,
+                                           mqtt_params->will_topic,
+                                           mqtt_params->will_msg,
+                                           (mqtt_params->will_msg ? mqtt_params->will_msg_len : 0),
+                                           mqtt_params->username,
+                                           mqtt_params->password,
+                                           mqtt_flags,
+                                           (mqtt_params->keep_alive ? mqtt_params->keep_alive : 400));
+        if (ret != MQTT_OK) {
+            mws_error(client->log, "Error with MQTT connect \"%s\"", mqtt_error_str(ret));
+            return 1;
+        }
     }
 
     client->poll_fds[POLLFD_PIPE].events = POLLIN;
@@ -839,7 +853,7 @@ static inline void set_socket_pollfds(mqtt_wss_client client, int ssl_ret) {
         client->poll_fds[POLLFD_SOCKET].events |= POLLIN;
 }
 
-static int handle_mqtt(mqtt_wss_client client)
+static int handle_mqtt_mqtt_c(mqtt_wss_client client)
 {
     if(client->ws_client->state == WS_ESTABLISHED) {
         // we need to call this only if there has been some movements
@@ -861,6 +875,19 @@ static int handle_mqtt(mqtt_wss_client client)
         }
     }
     return 0;
+}
+
+static int handle_mqtt_internal(mqtt_wss_client client)
+{
+    return 0;
+}
+
+static int handle_mqtt(mqtt_wss_client client)
+{
+    if(client->internal_mqtt)
+        return handle_mqtt_internal(client);
+
+    return handle_mqtt_mqtt_c(client);
 }
 
 #define SEC_TO_MSEC 1000
@@ -886,14 +913,17 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
         (client->poll_fds[POLLFD_PIPE].events & POLLIN) ? "PIPE_POLLIN" : "" );
 #endif
 
-    // Check user requested TO doesn't interfeere with MQTT keep alives
-    long int till_next_keep_alive = t_till_next_keepalive_ms(client->mqtt.mqtt_c->mqtt_client);
-    if (client->mqtt_connected && (timeout_ms < 0 || timeout_ms >= till_next_keep_alive)) {
-        #ifdef DEBUG_ULTRA_VERBOSE
-            mws_debug(client->log, "Shortening Timeout requested %d to %d to ensure keep-alive can be sent", timeout_ms, till_next_keep_alive);
-        #endif
-        timeout_ms = till_next_keep_alive;
-        send_keepalive = 1;
+    // TODO for internal MQTT
+    if (!client->internal_mqtt) {
+        // Check user requested TO doesn't interfeere with MQTT keep alives
+        long int till_next_keep_alive = t_till_next_keepalive_ms(client->mqtt.mqtt_c->mqtt_client);
+        if (client->mqtt_connected && (timeout_ms < 0 || timeout_ms >= till_next_keep_alive)) {
+            #ifdef DEBUG_ULTRA_VERBOSE
+                mws_debug(client->log, "Shortening Timeout requested %d to %d to ensure keep-alive can be sent", timeout_ms, till_next_keep_alive);
+            #endif
+            timeout_ms = till_next_keep_alive;
+            send_keepalive = 1;
+        }
     }
 
     if ((ret = poll(client->poll_fds, 2, timeout_ms >= 0 ? timeout_ms : -1)) < 0) {

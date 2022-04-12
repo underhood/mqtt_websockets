@@ -55,7 +55,8 @@ typedef void (*msg_callback_fnc_t)(const char *topic, const void *msg, size_t ms
 mqtt_wss_client mqtt_wss_new(const char *log_prefix,
                              mqtt_wss_log_callback_t log_callback,
                              msg_callback_fnc_t msg_callback,
-                             void (*puback_callback)(uint16_t packet_id));
+                             void (*puback_callback)(uint16_t packet_id),
+                             int mqtt5);
 
 void mqtt_wss_set_max_buf_size(mqtt_wss_client client, size_t size);
 
