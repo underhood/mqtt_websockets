@@ -39,6 +39,7 @@
 
 typedef struct mqtt_wss_client_struct *mqtt_wss_client;
 
+typedef void (*msg_callback_fnc_t)(const char *topic, const void *msg, size_t msglen, int qos);
 /* Creates new instance of MQTT over WSS. Doesn't start connection.
  * @param log_prefix this is prefix to be used when logging to discern between multiple
  *        mqtt_wss instances. Can be NULL.
@@ -53,7 +54,7 @@ typedef struct mqtt_wss_client_struct *mqtt_wss_client;
  */
 mqtt_wss_client mqtt_wss_new(const char *log_prefix,
                              mqtt_wss_log_callback_t log_callback,
-                             void (*msg_callback)(const char *topic, const void *msg, size_t msglen, int qos),
+                             msg_callback_fnc_t msg_callback,
                              void (*puback_callback)(uint16_t packet_id));
 
 void mqtt_wss_set_max_buf_size(mqtt_wss_client client, size_t size);
