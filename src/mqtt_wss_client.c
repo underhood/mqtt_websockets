@@ -871,11 +871,6 @@ static inline long int t_till_next_keepalive_ms(struct mqtt_client *mqtt)
     return(next_mqtt_keep_alive - (MQTT_PAL_TIME() * SEC_TO_MSEC));
 }
 
-int mqtt_wss_service2(mqtt_wss_client client, int timeout_ms)
-{
-
-}
-
 int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
 {
     char *ptr;
