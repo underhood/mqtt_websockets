@@ -286,7 +286,7 @@ mqtt_wss_client mqtt_wss_new(const char *log_prefix,
     client->poll_fds[POLLFD_SOCKET].events = POLLIN;
 
     if (client->internal_mqtt) {
-        if (mqtt_ng_init()) {
+        if ( (client->mqtt.mqtt_ctx = mqtt_ng_init(log)) == NULL ) {
             mws_error(log, "Error initializing internal MQTT client");
             goto fail_3;
         }
@@ -705,7 +705,28 @@ int mqtt_wss_connect(mqtt_wss_client client, char *host, int port, struct mqtt_c
 
     client->last_ec = 0;
 
-    if (!client->internal_mqtt) {
+    if (client->internal_mqtt) {
+        struct mqtt_auth_properties auth;
+        auth.client_id = (char*)mqtt_params->clientid;
+        auth.client_id_free = NULL;
+        auth.username = (char*)mqtt_params->username;
+        auth.username_free = NULL;
+        auth.password = (char*)mqtt_params->password;
+        auth.password_free = NULL;
+        struct mqtt_lwt_properties lwt;
+        lwt.will_topic = (char*)mqtt_params->will_topic;
+        lwt.will_topic_free = NULL;
+        lwt.will_message = (void*)mqtt_params->will_msg;
+        lwt.will_message_free = NULL; // TODO expose no copy version to API
+        lwt.will_message_size = mqtt_params->will_msg_len;
+        lwt.will_qos = (mqtt_params->will_flags & MQTT_WSS_PUB_QOSMASK);
+        lwt.will_retain = mqtt_params->will_flags & MQTT_WSS_PUB_RETAIN;
+        int ret = mqtt_ng_connect(client->mqtt.mqtt_ctx, &auth, &lwt, 1, (mqtt_params->keep_alive ? mqtt_params->keep_alive : 400) );
+        if (ret) {
+            mws_error(client->log, "Error generating MQTT connect");
+            return 1;
+        }
+    } else {
         enum MQTTErrors ret = mqtt_connect(mqtt_c->mqtt_client,
                                            mqtt_params->clientid,
                                            mqtt_params->will_topic,
@@ -879,6 +900,7 @@ static int handle_mqtt_mqtt_c(mqtt_wss_client client)
 
 static int handle_mqtt_internal(mqtt_wss_client client)
 {
+    (void)client;
     return 0;
 }
 
