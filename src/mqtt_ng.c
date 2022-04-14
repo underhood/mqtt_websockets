@@ -83,7 +83,56 @@ int uint32_to_mqtt_vbi(uint32_t input, char *output) {
     return i - 1;
 }
 
+#ifdef TESTS
+#include <stdio.h>
+#define MQTT_VBI_MAXLEN 4
+// we add extra byte to check we dont write out of bounds
+// in case where 4 bytes are supposed to be written
+static const char _mqtt_vbi_0[MQTT_VBI_MAXLEN + 1] = { 0x00, 0x00, 0x00, 0x00, 0x00 };
+static const char _mqtt_vbi_127[MQTT_VBI_MAXLEN + 1] = { 0x7F, 0x00, 0x00, 0x00, 0x00 };
+static const char _mqtt_vbi_128[MQTT_VBI_MAXLEN + 1] = { 0x80, 0x01, 0x00, 0x00, 0x00 };
+static const char _mqtt_vbi_16383[MQTT_VBI_MAXLEN + 1] = { 0xFF, 0x7F, 0x00, 0x00, 0x00 };
+static const char _mqtt_vbi_16384[MQTT_VBI_MAXLEN + 1] = { 0x80, 0x80, 0x01, 0x00, 0x00 };
+static const char _mqtt_vbi_2097151[MQTT_VBI_MAXLEN + 1] = { 0xFF, 0xFF, 0x7F, 0x00, 0x00 };
+static const char _mqtt_vbi_2097152[MQTT_VBI_MAXLEN + 1] = { 0x80, 0x80, 0x80, 0x01, 0x00 };
+static const char _mqtt_vbi_268435455[MQTT_VBI_MAXLEN + 1] = { 0xFF, 0xFF, 0xFF, 0x7F, 0x00 };
+
+#define MQTT_VBI_TESTCASE(case, expected_len) \
+    { \
+    memset(buf, 0, MQTT_VBI_MAXLEN + 1); \
+    int len; \
+    if ((len=uint32_to_mqtt_vbi(case, buf)) != expected_len) { \
+        fprintf(stderr, "uint32_to_mqtt_vbi(case:%d, line:%d): Incorrect length returned. Expected %d, Got %d\n", case, __LINE__, expected_len, len); \
+        return 1; \
+    } \
+    if (memcmp(buf, _mqtt_vbi_ ## case, MQTT_VBI_MAXLEN + 1 )) { \
+        fprintf(stderr, "uint32_to_mqtt_vbi(case:%d, line:%d): Wrong output\n", case, __LINE__); \
+        return 1; \
+    } }
+
+
+int test_uint32_mqtt_vbi() {
+    char buf[MQTT_VBI_MAXLEN + 1];
+
+    MQTT_VBI_TESTCASE(0,         1)
+    MQTT_VBI_TESTCASE(127,       1)
+    MQTT_VBI_TESTCASE(128,       2)
+    MQTT_VBI_TESTCASE(16383,     2)
+    MQTT_VBI_TESTCASE(16384,     3)
+    MQTT_VBI_TESTCASE(2097151,   3)
+    MQTT_VBI_TESTCASE(2097152,   4)
+    MQTT_VBI_TESTCASE(268435455, 4)
+
+    memset(buf, 0, MQTT_VBI_MAXLEN + 1);
+    int len;
+    if ((len=uint32_to_mqtt_vbi(268435456, buf)) != 0) {
+        fprintf(stderr, "uint32_to_mqtt_vbi(case:268435456, line:%d): Incorrect length returned. Expected 0, Got %d\n", __LINE__, len);
+        return 1;
+    }
+
+    return 0;
 }
+#endif /* TESTS */
 
 #define HEADER_BUFFER_SIZE 1024*1024
 struct mqtt_ng_client *mqtt_ng_init(mqtt_wss_log_ctx_t log) {
