@@ -68,6 +68,11 @@ int uint32_to_mqtt_vbi(uint32_t input, char *output) {
     if(input >= 256 * 1024 * 1024)
         return 0;
 
+    if(!input) {
+        *output = 0;
+        return 1;
+    }
+
     while(input) {
         output[i-1] = input & 0x7F;
         input >>= 7;
@@ -75,7 +80,9 @@ int uint32_to_mqtt_vbi(uint32_t input, char *output) {
             output[i-1] |= 0x80;
         i++;
     }
-    return i;
+    return i - 1;
+}
+
 }
 
 #define HEADER_BUFFER_SIZE 1024*1024
