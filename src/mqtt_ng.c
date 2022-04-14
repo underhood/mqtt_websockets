@@ -183,10 +183,7 @@ static inline enum memory_mode ptr2memory_mode(void * ptr) {
 // saves state of buffer before any operation was done
 // allowing for rollback if things go wrong
 #define BUFFER_TRANSACTION_START(client) memcpy(&client->rollback, &client->buf, sizeof(client->buf));
-
-#define BUFFER_TRANSACTION_ROLLBACK(client) \
-    memcpy(&client->buf, &client->rollback, sizeof(client->buf)); \
-    UNLOCK_HDR_BUFFER(client);
+#define BUFFER_TRANSACTION_ROLLBACK(client) memcpy(&client->buf, &client->rollback, sizeof(client->buf));
 
 #define CHECK_BYTES_AVAILABLE(client, needed, fail) \
     { if (BUFFER_BYTES_AVAILABLE(&client->buf) < (size_t)needed) { \
@@ -377,9 +374,11 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
             goto fail_rollback;
     }
 
+    UNLOCK_HDR_BUFFER(client);
     return 0;
 fail_rollback:
     BUFFER_TRANSACTION_ROLLBACK(client);
+    UNLOCK_HDR_BUFFER(client);
     return 1;
 }
 
