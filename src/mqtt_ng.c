@@ -50,6 +50,11 @@ struct mqtt_ng_client {
     struct header_buffer buf;
     pthread_mutex_t buf_mutex;
     mqtt_wss_log_ctx_t log;
+
+    // used while building new message
+    // to be able to revert state easily
+    // in case of error mid processing
+    struct header_buffer rollback;
 };
 
 int uint32_to_mqtt_vbi(uint32_t input, char *output) {
@@ -177,38 +182,68 @@ static inline enum memory_mode ptr2memory_mode(void * ptr) {
 // Creates transaction
 // saves state of buffer before any operation was done
 // allowing for rollback if things go wrong
-#define BUFFER_TRANSACTION_START(client) \
-        struct header_buffer rollback_state; \
-        memcpy(&rollback_state, &client->buf, sizeof(client->buf));
+#define BUFFER_TRANSACTION_START(client) memcpy(&client->rollback, &client->buf, sizeof(client->buf));
 
 #define BUFFER_TRANSACTION_ROLLBACK(client) \
-    memcpy(&client->buf, &rollback_state, sizeof(client->buf)); \
-    LOCK_HDR_BUFFER(client);
+    memcpy(&client->buf, &client->rollback, sizeof(client->buf)); \
+    UNLOCK_HDR_BUFFER(client);
 
-#define REQUEST_BUFFER_BYTES(client, needed) \
+#define CHECK_BYTES_AVAILABLE(client, needed, fail) \
     { if (BUFFER_BYTES_AVAILABLE(&client->buf) < (size_t)needed) { \
         ERROR("Not enough bytes available in header buffer. Required: %zu, Available: %zu. mqtt_ng.c:%d", needed, BUFFER_BYTES_AVAILABLE(&client->buf), __LINE__); \
-        return 1; \
-      } else { \
-          client->buf.tail+=needed; \
-      } \
-    }
+        fail; } }
 
-#define BUFFER_TRANSACTION_NEW_FRAG(client, packet_name) \
-    if (frag) { \
-        prev_frag = frag; \
-    } \
+#define BUFFER_TRANSACTION_NEW_FRAG(client, packet_name, frag) { \
+    struct buffer_fragment *prev = client->buf.tail_frag; \
     frag = buffer_new_frag(client); \
     if (frag == NULL) { \
-        BUFFER_TRANSACTION_ROLLBACK(client) \
         ERROR("Can't generate %s packet. Not enough space in MQTT header buffer for new fragment descriptor. (%d)", packet_name, __LINE__); \
         return 1; \
     } \
-    if (prev_frag != NULL) { \
-        prev_frag->next = frag; \
-    } \
-    write = frag->data;
+    if (prev != NULL) { \
+        prev->next = frag; \
+    } }
 
+#define DATA_ADVANCE(bytes, frag) { size_t b = (bytes); client->buf.tail += b; (frag)->len += b; }
+
+// [MQTT-1.5.2] Two Byte Integer
+#define PACK_2B_INT(integer, frag) { *(uint16_t *)frag->data = htobe16((integer)); \
+            DATA_ADVANCE(sizeof(uint16_t), frag); }
+
+static int _optimized_add(struct mqtt_ng_client *client, void *data, size_t data_len, free_fnc_t data_free_fnc, struct buffer_fragment **frag)
+{
+    if (data_len > SMALL_STRING_DONT_FRAGMENT_LIMIT) {
+        BUFFER_TRANSACTION_NEW_FRAG(client, "CONNECT", *frag);
+        switch (ptr2memory_mode(data_free_fnc)) {
+            case MEMCPY:
+                (*frag)->data = malloc(data_len);
+                if ((*frag)->data == NULL) {
+                    ERROR("OOM while malloc @_optimized_add");
+                    return 1;
+                }
+
+                memcpy((*frag)->data, data, data_len);
+                (*frag)->free_fnc = free;
+                break;
+            case EXTERNAL_FREE_AFTER_USE:
+                (*frag)->data = data;
+                (*frag)->free_fnc = data_free_fnc;
+                break;
+            case CALLER_RESPONSIBLE:
+                (*frag)->data = data;
+                break;
+        }
+        (*frag)->len += data_len;
+        *frag = NULL;
+    } else if (data_len) {
+        // if the data are small dont bother creating new fragments
+        // store in buffer directly
+        CHECK_BYTES_AVAILABLE(client, data_len, return 1);
+        memcpy(client->buf.tail, data, data_len);
+        DATA_ADVANCE(data_len, *frag);
+    }
+    return 0;
+}
 
 int mqtt_ng_connect(struct mqtt_ng_client *client,
                     struct mqtt_auth_properties *auth,
@@ -264,81 +299,88 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
     size_t size = mqtt_ng_connect_size(auth, lwt);
 
     // Start generating the message
-    struct buffer_fragment *frag = NULL, *prev_frag = NULL;
+    struct buffer_fragment *frag = NULL;
 
-    char *write;
-    BUFFER_TRANSACTION_NEW_FRAG(client, "CONNECT");
+    BUFFER_TRANSACTION_NEW_FRAG(client, "CONNECT", frag);
     frag->flags |= BUFFER_FRAG_DATA_FOLLOWING;
 
     // MQTT Fixed Header
     size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + sizeof(mqtt_protocol_name_frag) + 1 /* CONNECT FLAGS */ + 2 /* keepalive */ + 1 /* Properties TODO now fixed 0*/;
-    REQUEST_BUFFER_BYTES(client, needed_bytes);
+    CHECK_BYTES_AVAILABLE(client, needed_bytes, goto fail_rollback);
 
-    *write++ = MQTT_CPT_CONNECT << 4;
-    write += uint32_to_mqtt_vbi(size, write);
+    *frag->data = MQTT_CPT_CONNECT << 4;
+    DATA_ADVANCE(1 + uint32_to_mqtt_vbi(size, frag->data), frag);
 
-    memcpy(write, mqtt_protocol_name_frag, sizeof(mqtt_protocol_name_frag));
-    write += sizeof(mqtt_protocol_name_frag);
+    memcpy(frag->data, mqtt_protocol_name_frag, sizeof(mqtt_protocol_name_frag));
+    DATA_ADVANCE(sizeof(mqtt_protocol_name_frag), frag);
 
-    *write = 0;
+    *frag->data = 0;
     if (auth->username)
-        *write |= MQTT_CONNECT_FLAG_USERNAME;
+        *frag->data |= MQTT_CONNECT_FLAG_USERNAME;
     if (auth->password)
-        *write |= MQTT_CONNECT_FLAG_PASSWORD;
+        *frag->data |= MQTT_CONNECT_FLAG_PASSWORD;
     if (lwt) {
-        *write |= MQTT_CONNECT_FLAG_LWT;
-        *write |= lwt->will_qos << MQTT_CONNECT_FLAG_QOS_BITSHIFT;
+        *frag->data |= MQTT_CONNECT_FLAG_LWT;
+        *frag->data |= lwt->will_qos << MQTT_CONNECT_FLAG_QOS_BITSHIFT;
         if (lwt->will_retain)
-            *write |= MQTT_CONNECT_FLAG_LWT_RETAIN;
+            *frag->data |= MQTT_CONNECT_FLAG_LWT_RETAIN;
     }
     if (clean_start)
-        *write |= MQTT_CONNECT_FLAG_CLEAN_START;
+        *frag->data |= MQTT_CONNECT_FLAG_CLEAN_START;
 
-    write++;
+    DATA_ADVANCE(1, frag);
 
-    *(uint16_t *)write = htobe16(keep_alive);
-    write += 2;
+    PACK_2B_INT(keep_alive, frag);
 
     // TODO Property Length [MQTT-3.1.3.2.1] temporary fixed 0
-    *write++ = 0;
+    *frag->data = 0;
+    DATA_ADVANCE(1, frag);
 
-
-    if (strlen(auth->client_id) > SMALL_STRING_DONT_FRAGMENT_LIMIT) {
-        BUFFER_TRANSACTION_NEW_FRAG(client, "CONNECT");
-        switch (ptr2memory_mode(auth->client_id_free)) {
-            case MEMCPY:
-                frag->data = strdup(auth->client_id);
-                frag->free_fnc = free;
-                break;
-            case EXTERNAL_FREE_AFTER_USE:
-                frag->data = auth->client_id;
-                frag->free_fnc = auth->client_id_free;
-                break;
-            case CALLER_RESPONSIBLE:
-                frag->data = auth->client_id;
-                break;
-        }
-        prev_frag = frag;
-        frag = NULL;
-    } else {
-        // if the string is small dont bother creating new fragments
-        // store in buffer directly
-        size_t len = strlen(auth->client_id);
-        REQUEST_BUFFER_BYTES(client, len);
-        memcpy(write, auth->client_id, len);
-        write += len;
-    }
-
-    if (frag == NULL) BUFFER_TRANSACTION_NEW_FRAG(client, "CONNECT");
+    // [MQTT-3.1.3.1] Client identifier
+    PACK_2B_INT(strlen(auth->client_id), frag);
+    if (_optimized_add(client, auth->client_id, strlen(auth->client_id), auth->client_id_free, &frag))
+        goto fail_rollback;
+    if (frag == NULL) BUFFER_TRANSACTION_NEW_FRAG(client, "CONNECT", frag);
 
     // Will Properties [MQTT-3.1.3.2]
     // TODO for now fixed 0
-    REQUEST_BUFFER_BYTES(client, 1);
-    *write++ = 0;
+    CHECK_BYTES_AVAILABLE(client, 1, goto fail_rollback);
+    *frag->data = 0;
+    DATA_ADVANCE(1, frag);
 
-    // CONTINUE HERE TODO
+    if (lwt) {
+        // Will Topic [MQTT-3.1.3.3]
+        if (_optimized_add(client, lwt->will_topic, strlen(lwt->will_topic), lwt->will_topic_free, &frag))
+            goto fail_rollback;
+
+        // Will Payload [MQTT-3.1.3.4]
+        if (lwt->will_message_size) {
+            if (frag == NULL) BUFFER_TRANSACTION_NEW_FRAG(client, "CONNECT", frag);
+
+            PACK_2B_INT(lwt->will_message_size, frag);
+            if (_optimized_add(client, lwt->will_message, lwt->will_message_size, lwt->will_topic_free, &frag))
+                goto fail_rollback;
+        }
+    }
+
+    // [MQTT-3.1.3.5]
+    if (auth->username) {
+        if (frag == NULL) BUFFER_TRANSACTION_NEW_FRAG(client, "CONNECT", frag);
+        if (_optimized_add(client, auth->username, strlen(auth->username), auth->username_free, &frag))
+            goto fail_rollback;
+    }
+
+    // [MQTT-3.1.3.6]
+    if (auth->password) {
+        if (frag == NULL) BUFFER_TRANSACTION_NEW_FRAG(client, "CONNECT", frag);
+        if (_optimized_add(client, auth->password, strlen(auth->password), auth->password_free, &frag))
+            goto fail_rollback;
+    }
 
     return 0;
+fail_rollback:
+    BUFFER_TRANSACTION_ROLLBACK(client);
+    return 1;
 }
 
 // this dummy exists to have a special pointer with special meaning

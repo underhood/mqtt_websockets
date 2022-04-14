@@ -31,9 +31,11 @@ int uint32_to_mqtt_vbi(uint32_t input, char *output);
 struct mqtt_lwt_properties {
     char *will_topic;
     free_fnc_t will_topic_free;
+
     void *will_message;
     free_fnc_t will_message_free;
     size_t will_message_size;
+
     int will_qos;
     int will_retain;
 };
