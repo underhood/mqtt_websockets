@@ -434,8 +434,8 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
 
     // [MQTT-3.1.3.6]
     if (auth->password) {
-        PACK_2B_INT(strlen(auth->password), frag);
         if (frag == NULL) BUFFER_TRANSACTION_NEW_FRAG(client, "CONNECT", frag);
+        PACK_2B_INT(strlen(auth->password), frag);
         if (_optimized_add(client, auth->password, strlen(auth->password), auth->password_free, &frag))
             goto fail_rollback;
     }
