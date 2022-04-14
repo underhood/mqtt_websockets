@@ -259,8 +259,11 @@ static inline enum memory_mode ptr2memory_mode(void * ptr) {
 
 #define DATA_ADVANCE(bytes, frag) { size_t b = (bytes); client->buf.tail += b; (frag)->len += b; }
 
+// TODO maybe just user client->buf.tail?
+#define WRITE_POS(frag) (&(frag->data[frag->len]))
+
 // [MQTT-1.5.2] Two Byte Integer
-#define PACK_2B_INT(integer, frag) { *(uint16_t *)frag->data = htobe16((integer)); \
+#define PACK_2B_INT(integer, frag) { *(uint16_t *)WRITE_POS(frag) = htobe16((integer)); \
             DATA_ADVANCE(sizeof(uint16_t), frag); }
 
 static int _optimized_add(struct mqtt_ng_client *client, void *data, size_t data_len, free_fnc_t data_free_fnc, struct buffer_fragment **frag)
@@ -361,32 +364,37 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
     size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + sizeof(mqtt_protocol_name_frag) + 1 /* CONNECT FLAGS */ + 2 /* keepalive */ + 1 /* Properties TODO now fixed 0*/;
     CHECK_BYTES_AVAILABLE(client, needed_bytes, goto fail_rollback);
 
-    *frag->data = MQTT_CPT_CONNECT << 4;
-    DATA_ADVANCE(1 + uint32_to_mqtt_vbi(size, frag->data), frag);
+    *WRITE_POS(frag) = MQTT_CPT_CONNECT << 4;
+    DATA_ADVANCE(1, frag);
+    uint32_t a;
+    printf("Data %d, LEn fnc %d, Len macro %d\n", size, uint32_to_mqtt_vbi(size, &a), MQTT_VARSIZE_INT_BYTES(size));
+    DATA_ADVANCE(uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
 
-    memcpy(frag->data, mqtt_protocol_name_frag, sizeof(mqtt_protocol_name_frag));
+    memcpy(WRITE_POS(frag), mqtt_protocol_name_frag, sizeof(mqtt_protocol_name_frag));
     DATA_ADVANCE(sizeof(mqtt_protocol_name_frag), frag);
 
-    *frag->data = 0;
+    // [MQTT-3.1.2.3] Connect flags
+    char *connect_flags = WRITE_POS(frag);
+    *connect_flags = 0;
     if (auth->username)
-        *frag->data |= MQTT_CONNECT_FLAG_USERNAME;
+        *connect_flags |= MQTT_CONNECT_FLAG_USERNAME;
     if (auth->password)
-        *frag->data |= MQTT_CONNECT_FLAG_PASSWORD;
+        *connect_flags |= MQTT_CONNECT_FLAG_PASSWORD;
     if (lwt) {
-        *frag->data |= MQTT_CONNECT_FLAG_LWT;
-        *frag->data |= lwt->will_qos << MQTT_CONNECT_FLAG_QOS_BITSHIFT;
+        *connect_flags |= MQTT_CONNECT_FLAG_LWT;
+        *connect_flags |= lwt->will_qos << MQTT_CONNECT_FLAG_QOS_BITSHIFT;
         if (lwt->will_retain)
-            *frag->data |= MQTT_CONNECT_FLAG_LWT_RETAIN;
+            *connect_flags |= MQTT_CONNECT_FLAG_LWT_RETAIN;
     }
     if (clean_start)
-        *frag->data |= MQTT_CONNECT_FLAG_CLEAN_START;
+        *connect_flags |= MQTT_CONNECT_FLAG_CLEAN_START;
 
     DATA_ADVANCE(1, frag);
 
     PACK_2B_INT(keep_alive, frag);
 
     // TODO Property Length [MQTT-3.1.3.2.1] temporary fixed 0
-    *frag->data = 0;
+    *WRITE_POS(frag) = 0;
     DATA_ADVANCE(1, frag);
 
     // [MQTT-3.1.3.1] Client identifier
@@ -398,10 +406,10 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
     // Will Properties [MQTT-3.1.3.2]
     // TODO for now fixed 0
     CHECK_BYTES_AVAILABLE(client, 1, goto fail_rollback);
-    *frag->data = 0;
+    *WRITE_POS(frag) = 0;
     DATA_ADVANCE(1, frag);
 
-    if (lwt) {
+    if (lwt != NULL) {
         // Will Topic [MQTT-3.1.3.3]
         if (_optimized_add(client, lwt->will_topic, strlen(lwt->will_topic), lwt->will_topic_free, &frag))
             goto fail_rollback;
@@ -419,12 +427,14 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
     // [MQTT-3.1.3.5]
     if (auth->username) {
         if (frag == NULL) BUFFER_TRANSACTION_NEW_FRAG(client, "CONNECT", frag);
+        PACK_2B_INT(strlen(auth->username), frag);
         if (_optimized_add(client, auth->username, strlen(auth->username), auth->username_free, &frag))
             goto fail_rollback;
     }
 
     // [MQTT-3.1.3.6]
     if (auth->password) {
+        PACK_2B_INT(strlen(auth->password), frag);
         if (frag == NULL) BUFFER_TRANSACTION_NEW_FRAG(client, "CONNECT", frag);
         if (_optimized_add(client, auth->password, strlen(auth->password), auth->password_free, &frag))
             goto fail_rollback;
