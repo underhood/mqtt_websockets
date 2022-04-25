@@ -44,6 +44,8 @@ struct buffer_fragment {
     struct buffer_fragment *next;
 };
 
+typedef struct buffer_fragment *mqtt_msg_data;
+
 // buffer used for MQTT headers only
 // not for actual data sent
 struct header_buffer {
@@ -55,13 +57,17 @@ struct header_buffer {
 
 struct mqtt_ng_client {
     struct header_buffer buf;
-    pthread_mutex_t buf_mutex;
-    mqtt_wss_log_ctx_t log;
-
     // used while building new message
     // to be able to revert state easily
     // in case of error mid processing
     struct header_buffer rollback;
+    pthread_mutex_t buf_mutex;
+
+    enum mqtt_client_state client_state;
+
+    mqtt_msg_data connect_msg;
+
+    mqtt_wss_log_ctx_t log;
 };
 
 int uint32_to_mqtt_vbi(uint32_t input, char *output) {
@@ -311,16 +317,16 @@ static int _optimized_add(struct mqtt_ng_client *client, void *data, size_t data
     return 0;
 }
 
-int mqtt_ng_connect(struct mqtt_ng_client *client,
-                    struct mqtt_auth_properties *auth,
-                    struct mqtt_lwt_properties *lwt,
-                    uint8_t clean_start,
-                    uint16_t keep_alive)
+mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
+                                       struct mqtt_auth_properties *auth,
+                                       struct mqtt_lwt_properties *lwt,
+                                       uint8_t clean_start,
+                                       uint16_t keep_alive)
 {
     // Sanity Checks First (are given parameters correct and up to MQTT spec)
     if (!auth->client_id) {
         ERROR("ClientID must be set. [MQTT-3.1.3-3]");
-        return 1;
+        return NULL;
     }
 
     size_t len = strlen(auth->client_id);
@@ -342,18 +348,18 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
     if (lwt) {
         if (lwt->will_message && lwt->will_message_size > 65535) {
             ERROR("Will message cannot be longer than 65535 bytes due to MQTT protocol limitations [MQTT-3.1.3-4] and [MQTT-1.5.6]");
-            return 1;
+            return NULL;
         }
 
         if (!lwt->will_topic) { //TODO topic given with strlen==0 ? check specs
             ERROR("If will message is given will topic must also be given [MQTT-3.1.3.3]");
-            return 1;
+            return NULL;
         }
 
         if (lwt->will_qos > MQTT_MAX_QOS) {
             // refer to [MQTT-3-1.2-12]
             ERROR("QOS for LWT message is bigger than max");
-            return 1;
+            return NULL;
         }
     }
 
@@ -368,6 +374,7 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
     struct buffer_fragment *frag = NULL;
 
     BUFFER_TRANSACTION_NEW_FRAG(client, "CONNECT", frag, BUFFER_FRAG_DATA_FOLLOWING | BUFFER_FRAG_MQTT_PACKET_HEAD);
+    mqtt_msg_data ret = frag;
 
     // MQTT Fixed Header
     size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + sizeof(mqtt_protocol_name_frag) + 1 /* CONNECT FLAGS */ + 2 /* keepalive */ + 1 /* Properties TODO now fixed 0*/;
@@ -451,11 +458,30 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
     client->buf.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
     dump_buffer_fragment(client->buf.data);
     UNLOCK_HDR_BUFFER(client);
-    return 0;
+    return ret;
 fail_rollback:
     BUFFER_TRANSACTION_ROLLBACK(client);
     UNLOCK_HDR_BUFFER(client);
-    return 1;
+    return NULL;
+}
+
+int mqtt_ng_connect(struct mqtt_ng_client *client,
+                    struct mqtt_auth_properties *auth,
+                    struct mqtt_lwt_properties *lwt,
+                    uint8_t clean_start,
+                    uint16_t keep_alive)
+{
+    if (client->client_state != RAW) {
+        ERROR("Cannot connect already connected (or connecting) client");
+        return 1;
+    }
+    mqtt_msg_data connect_msg = mqtt_ng_generate_connect(client, auth, lwt, clean_start, keep_alive);
+    if (connect_msg == NULL)
+        return 1;
+
+    client->client_state = CONNECTING;
+    client->connect_msg = connect_msg;
+    return 0;
 }
 
 // this dummy exists to have a special pointer with special meaning
