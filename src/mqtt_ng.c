@@ -447,6 +447,7 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
     DATA_ADVANCE(1, frag);
 
     // [MQTT-3.1.3.1] Client identifier
+    CHECK_BYTES_AVAILABLE(client, 2, goto fail_rollback);
     PACK_2B_INT(strlen(auth->client_id), frag);
     if (_optimized_add(client, auth->client_id, strlen(auth->client_id), auth->client_id_free, &frag))
         goto fail_rollback;
@@ -466,7 +467,7 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
         // Will Payload [MQTT-3.1.3.4]
         if (lwt->will_message_size) {
             BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
-
+            CHECK_BYTES_AVAILABLE(client, 2, goto fail_rollback);
             PACK_2B_INT(lwt->will_message_size, frag);
             if (_optimized_add(client, lwt->will_message, lwt->will_message_size, lwt->will_topic_free, &frag))
                 goto fail_rollback;
@@ -476,6 +477,7 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
     // [MQTT-3.1.3.5]
     if (auth->username) {
         BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
+        CHECK_BYTES_AVAILABLE(client, 2, goto fail_rollback);
         PACK_2B_INT(strlen(auth->username), frag);
         if (_optimized_add(client, auth->username, strlen(auth->username), auth->username_free, &frag))
             goto fail_rollback;
@@ -484,6 +486,7 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
     // [MQTT-3.1.3.6]
     if (auth->password) {
         BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
+        CHECK_BYTES_AVAILABLE(client, 2, goto fail_rollback);
         PACK_2B_INT(strlen(auth->password), frag);
         if (_optimized_add(client, auth->password, strlen(auth->password), auth->password_free, &frag))
             goto fail_rollback;
