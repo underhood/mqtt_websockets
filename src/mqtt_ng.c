@@ -277,10 +277,10 @@ static size_t mqtt_ng_connect_size(struct mqtt_auth_properties *auth,
     if (auth->client_id)
         size += MQTT_UTF8_STRING_SIZE(auth->client_id);
 
-    // 3.1.3.2 will properties TODO TODO
-    size += 1;
-
     if (lwt) {
+        // 3.1.3.2 will properties TODO TODO
+        size += 1;
+
         // 3.1.3.3
         if (lwt->will_topic)
             size += MQTT_UTF8_STRING_SIZE(lwt->will_topic);
@@ -477,13 +477,13 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
         goto fail_rollback;
     BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
 
-    // Will Properties [MQTT-3.1.3.2]
-    // TODO for now fixed 0
-    CHECK_BYTES_AVAILABLE(client, 1, goto fail_rollback);
-    *WRITE_POS(frag) = 0;
-    DATA_ADVANCE(1, frag);
-
     if (lwt != NULL) {
+        // Will Properties [MQTT-3.1.3.2]
+        // TODO for now fixed 0
+        CHECK_BYTES_AVAILABLE(client, 1, goto fail_rollback);
+        *WRITE_POS(frag) = 0;
+        DATA_ADVANCE(1, frag);
+
         // Will Topic [MQTT-3.1.3.3]
         if (_optimized_add(client, lwt->will_topic, strlen(lwt->will_topic), lwt->will_topic_free, &frag))
             goto fail_rollback;
