@@ -205,6 +205,21 @@ static struct buffer_fragment *buffer_new_frag(struct mqtt_ng_client *client, bu
     return frag;
 }
 
+static void buffer_frag_free_data(struct buffer_fragment *frag)
+{
+    if ( frag->flags & BUFFER_FRAG_DATA_EXTERNAL ) {
+        switch (ptr2memory_mode(frag->free_fnc)) {
+            case MEMCPY:
+                free(frag->data);
+                break;
+            case EXTERNAL_FREE_AFTER_USE:
+                frag->free_fnc(frag->data);
+                break;
+            case CALLER_RESPONSIBLE:
+                break;
+        }
+    }
+}
 
 int frag_set_external_data(mqtt_wss_log_ctx_t log, struct buffer_fragment *frag, void *data, size_t data_len, free_fnc_t data_free_fnc)
 {
@@ -296,11 +311,20 @@ static size_t mqtt_ng_connect_size(struct mqtt_auth_properties *auth,
 
 #define buffer_transaction_commit(client) UNLOCK_HDR_BUFFER(client);
 
-void buffer_transaction_rollback(struct mqtt_ng_client *client)
+void buffer_transaction_rollback(struct mqtt_ng_client *client, struct buffer_fragment *frag)
 {
     memcpy(&client->buf, &client->rollback, sizeof(client->buf));
     if (client->buf.tail_frag != NULL)
         client->buf.tail_frag->next = NULL;
+
+    while(frag) {
+        buffer_frag_free_data(frag);
+        // we are not actually freeing the structure itself
+        // just the data it manages
+        // structure itself is in permanent buffer
+        // which is locked by HDR_BUFFER lock
+        frag = frag->next;
+    }
 
     UNLOCK_HDR_BUFFER(client);
 }
@@ -404,10 +428,10 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
 
     // Start generating the message
     struct buffer_fragment *frag = NULL;
+    mqtt_msg_data ret = NULL;
 
     BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD, frag, goto fail_rollback );
-
-    mqtt_msg_data ret = frag;
+    ret = frag;
 
     // MQTT Fixed Header
     size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + sizeof(mqtt_protocol_name_frag) + 1 /* CONNECT FLAGS */ + 2 /* keepalive */ + 1 /* Properties TODO now fixed 0*/;
@@ -495,7 +519,7 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
     buffer_transaction_commit(client);
     return ret;
 fail_rollback:
-    buffer_transaction_rollback(client);
+    buffer_transaction_rollback(client, ret);
     return NULL;
 }
 
