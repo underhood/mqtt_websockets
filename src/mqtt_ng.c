@@ -23,8 +23,8 @@
 #define BUFFER_FRAG_GARBAGE_COLLECT   0x01
 // as buffer fragment can point to both
 // external data and data in the same buffer
-// we mark the latter case with BUFFER_FRAG_DATA_FOLLOWING
-#define BUFFER_FRAG_DATA_FOLLOWING    0x02
+// we mark the former case with BUFFER_FRAG_DATA_EXTERNAL
+#define BUFFER_FRAG_DATA_EXTERNAL     0x02
 // as single MQTT Packet can be stored into multiple
 // buffer fragments (depending on copy requirements)
 // this marks this fragment to be the first/last
@@ -297,7 +297,7 @@ int buffer_transaction_rollback(struct mqtt_ng_client *client)
 static int _optimized_add(struct mqtt_ng_client *client, void *data, size_t data_len, free_fnc_t data_free_fnc, struct buffer_fragment **frag)
 {
     if (data_len > SMALL_STRING_DONT_FRAGMENT_LIMIT) {
-        if( (*frag = buffer_new_frag(client, 0)) == NULL ) {
+        if( (*frag = buffer_new_frag(client, BUFFER_FRAG_DATA_EXTERNAL)) == NULL ) {
             ERROR("Out of buffer space while generating the message");
             return 1;
         }
@@ -318,6 +318,7 @@ static int _optimized_add(struct mqtt_ng_client *client, void *data, size_t data
                 break;
             case CALLER_RESPONSIBLE:
                 (*frag)->data = data;
+                (*frag)->free_fnc = CALLER_RESPONSIBILITY;
                 break;
         }
         (*frag)->len += data_len;
@@ -388,7 +389,7 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
     // Start generating the message
     struct buffer_fragment *frag = NULL;
 
-    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_DATA_FOLLOWING | BUFFER_FRAG_MQTT_PACKET_HEAD, frag, goto fail_rollback );
+    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD, frag, goto fail_rollback );
 
     mqtt_msg_data ret = frag;
 
@@ -433,7 +434,7 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
     PACK_2B_INT(strlen(auth->client_id), frag);
     if (_optimized_add(client, auth->client_id, strlen(auth->client_id), auth->client_id_free, &frag))
         goto fail_rollback;
-    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_DATA_FOLLOWING, frag, goto fail_rollback);
+    BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
 
     // Will Properties [MQTT-3.1.3.2]
     // TODO for now fixed 0
@@ -448,7 +449,7 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
 
         // Will Payload [MQTT-3.1.3.4]
         if (lwt->will_message_size) {
-            BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_DATA_FOLLOWING, frag, goto fail_rollback);
+            BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
 
             PACK_2B_INT(lwt->will_message_size, frag);
             if (_optimized_add(client, lwt->will_message, lwt->will_message_size, lwt->will_topic_free, &frag))
@@ -458,7 +459,7 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
 
     // [MQTT-3.1.3.5]
     if (auth->username) {
-        BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_DATA_FOLLOWING, frag, goto fail_rollback);
+        BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
         PACK_2B_INT(strlen(auth->username), frag);
         if (_optimized_add(client, auth->username, strlen(auth->username), auth->username_free, &frag))
             goto fail_rollback;
@@ -466,7 +467,7 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
 
     // [MQTT-3.1.3.6]
     if (auth->password) {
-        BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_DATA_FOLLOWING, frag, goto fail_rollback);
+        BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
         PACK_2B_INT(strlen(auth->password), frag);
         if (_optimized_add(client, auth->password, strlen(auth->password), auth->password_free, &frag))
             goto fail_rollback;
