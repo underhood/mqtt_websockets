@@ -165,6 +165,22 @@ struct mqtt_ng_client *mqtt_ng_init(mqtt_wss_log_ctx_t log) {
     return client;
 }
 
+// this helps with switch statements
+// as they have to use integer type (not pointer)
+enum memory_mode {
+    MEMCPY,
+    EXTERNAL_FREE_AFTER_USE,
+    CALLER_RESPONSIBLE
+};
+
+static inline enum memory_mode ptr2memory_mode(void * ptr) {
+    if (ptr == NULL)
+        return MEMCPY;
+    if (ptr == CALLER_RESPONSIBILITY)
+        return CALLER_RESPONSIBLE;
+    return EXTERNAL_FREE_AFTER_USE;
+}
+
 #define BUFFER_BYTES_USED(buf) ((size_t)((buf)->tail - (buf)->data))
 #define BUFFER_BYTES_AVAILABLE(buf) (HEADER_BUFFER_SIZE - BUFFER_BYTES_USED(buf))
 
@@ -188,6 +204,39 @@ static struct buffer_fragment *buffer_new_frag(struct mqtt_ng_client *client, bu
 
     return frag;
 }
+
+
+int frag_set_external_data(mqtt_wss_log_ctx_t log, struct buffer_fragment *frag, void *data, size_t data_len, free_fnc_t data_free_fnc)
+{
+    if (frag->len) {
+        // TODO?: This could potentially be done in future if we set rule
+        // external data always follows in buffer data
+        // could help reduce fragmentation in some messages but
+        // currently not worth it considering time is tight
+        mws_fatal(log, UNIT_LOG_PREFIX "INTERNAL ERROR: Cannot set external data to fragment already containing in buffer data!");
+        return 1;
+    }
+
+    switch (ptr2memory_mode(data_free_fnc)) {
+        case MEMCPY:
+            frag->data = malloc(data_len);
+            if (frag->data == NULL) {
+                mws_error(log, UNIT_LOG_PREFIX "OOM while malloc @_optimized_add");
+                return 1;
+            }
+            memcpy(frag->data, data, data_len);
+            break;
+        case EXTERNAL_FREE_AFTER_USE:
+        case CALLER_RESPONSIBLE:
+            frag->data = data;
+            break;
+    }
+    frag->free_fnc = data_free_fnc;
+    frag->len = data_len;
+
+    frag->flags |= BUFFER_FRAG_DATA_EXTERNAL;
+    return 0;
+ }
 
 // this is fixed part of variable header for connect packet
 // mqtt-v5.0-cs1, 3.1.2.1, 2.1.2.2
@@ -238,22 +287,6 @@ static size_t mqtt_ng_connect_size(struct mqtt_auth_properties *auth,
     return size;
 }
 
-// this helps with switch statements
-// as they have to use integer type (not pointer)
-enum memory_mode {
-    MEMCPY,
-    EXTERNAL_FREE_AFTER_USE,
-    CALLER_RESPONSIBLE
-};
-
-static inline enum memory_mode ptr2memory_mode(void * ptr) {
-    if (ptr == NULL)
-        return MEMCPY;
-    if (ptr == CALLER_RESPONSIBILITY)
-        return CALLER_RESPONSIBLE;
-    return EXTERNAL_FREE_AFTER_USE;
-}
-
 // Creates transaction
 // saves state of buffer before any operation was done
 // allowing for rollback if things go wrong
@@ -301,27 +334,11 @@ static int _optimized_add(struct mqtt_ng_client *client, void *data, size_t data
             ERROR("Out of buffer space while generating the message");
             return 1;
         }
-        switch (ptr2memory_mode(data_free_fnc)) {
-            case MEMCPY:
-                (*frag)->data = malloc(data_len);
-                if ((*frag)->data == NULL) {
-                    ERROR("OOM while malloc @_optimized_add");
-                    return 1;
-                }
-
-                memcpy((*frag)->data, data, data_len);
-                (*frag)->free_fnc = free;
-                break;
-            case EXTERNAL_FREE_AFTER_USE:
-                (*frag)->data = data;
-                (*frag)->free_fnc = data_free_fnc;
-                break;
-            case CALLER_RESPONSIBLE:
-                (*frag)->data = data;
-                (*frag)->free_fnc = CALLER_RESPONSIBILITY;
-                break;
+        if (frag_set_external_data(client->log, *frag, data, data_len, data_free_fnc)) {
+            ERROR("Error adding external data to newly created fragment");
+            return 1;
         }
-        (*frag)->len += data_len;
+        // we dont want to write to this fragment anymore
         *frag = NULL;
     } else if (data_len) {
         // if the data are small dont bother creating new fragments
@@ -329,7 +346,6 @@ static int _optimized_add(struct mqtt_ng_client *client, void *data, size_t data
         CHECK_BYTES_AVAILABLE(client, data_len, return 1);
         memcpy(client->buf.tail, data, data_len);
         DATA_ADVANCE(data_len, *frag);
-        (*frag)->flags |= BUFFER_FRAG_DATA_FOLLOWING;
     }
     return 0;
 }
