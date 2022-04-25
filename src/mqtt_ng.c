@@ -263,7 +263,7 @@ static inline enum memory_mode ptr2memory_mode(void * ptr) {
 
 #define buffer_transaction_commit(client) UNLOCK_HDR_BUFFER(client);
 
-int buffer_transaction_rollback(struct mqtt_ng_client *client)
+void buffer_transaction_rollback(struct mqtt_ng_client *client)
 {
     memcpy(&client->buf, &client->rollback, sizeof(client->buf));
     if (client->buf.tail_frag != NULL)
