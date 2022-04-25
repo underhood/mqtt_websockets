@@ -34,6 +34,8 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 
+#define DEBUG_ULTRA_VERBOSE
+
 #define PIPE_READ_END  0
 #define PIPE_WRITE_END 1
 #define POLLFD_SOCKET  0
@@ -235,6 +237,13 @@ static int mqtt_c_init(mqtt_wss_client client, msg_callback_fnc_t msg_callback) 
     return 0;
 }
 
+ssize_t mqtt_ng_send(void *user_ctx, const void* buf, size_t len)
+{
+//    mqtt_wss_client *ctx = (mqtt_wss_client*)user_ctx;
+    mqtt_pal_socket_handle ctx = (mqtt_pal_socket_handle)user_ctx;
+    return mqtt_pal_sendall(ctx, buf, len, 0);
+}
+
 mqtt_wss_client mqtt_wss_new(const char *log_prefix,
                              mqtt_wss_log_callback_t log_callback,
                              msg_callback_fnc_t msg_callback,
@@ -286,7 +295,7 @@ mqtt_wss_client mqtt_wss_new(const char *log_prefix,
     client->poll_fds[POLLFD_SOCKET].events = POLLIN;
 
     if (client->internal_mqtt) {
-        if ( (client->mqtt.mqtt_ctx = mqtt_ng_init(log)) == NULL ) {
+        if ( (client->mqtt.mqtt_ctx = mqtt_ng_init(log, client->ws_client->buf_to_mqtt, &mqtt_ng_send, client)) == NULL ) {
             mws_error(log, "Error initializing internal MQTT client");
             goto fail_3;
         }
@@ -745,9 +754,10 @@ int mqtt_wss_connect(mqtt_wss_client client, char *host, int port, struct mqtt_c
     client->poll_fds[POLLFD_PIPE].events = POLLIN;
     client->poll_fds[POLLFD_SOCKET].events = POLLIN;
     // wait till MQTT connection is established
+    int a;
     while (!client->mqtt_connected) {
-        if(mqtt_wss_service(client, -1)) {
-            mws_error(client->log, "Error connecting to MQTT WSS server \"%s\", port %d.", host, port);
+        if((a = mqtt_wss_service(client, -1))) {
+            mws_error(client->log, "Error connecting to MQTT WSS server \"%s\", port %d. %d", host, port, a);
             return 2;
         }
     }
@@ -876,24 +886,22 @@ static inline void set_socket_pollfds(mqtt_wss_client client, int ssl_ret) {
 
 static int handle_mqtt_mqtt_c(mqtt_wss_client client)
 {
-    if(client->ws_client->state == WS_ESTABLISHED) {
-        // we need to call this only if there has been some movements
-        // - read side is handled by POLLIN and ws_client_process
-        // - write side is handled by PIPE write every time we send MQTT
-        // message ensuring we wake up from poll
-        enum MQTTErrors mqtt_ret = mqtt_sync(client->mqtt.mqtt_c->mqtt_client);
-        if (mqtt_ret != MQTT_OK) {
+    // we need to call this only if there has been some movements
+    // - read side is handled by POLLIN and ws_client_process
+    // - write side is handled by PIPE write every time we send MQTT
+    // message ensuring we wake up from poll
+    enum MQTTErrors mqtt_ret = mqtt_sync(client->mqtt.mqtt_c->mqtt_client);
+    if (mqtt_ret != MQTT_OK) {
 //            mws_error(client->log, "Error mqtt_sync MQTT \"%s\"", mqtt_error_str(mqtt_ret));
 // TODO coverity reported bug in mqtt library here function mqtt_sync can return
 // -2 acording to coverity resulting in out of bounds access in mqtt_error_str
-            mws_error(client->log, "Error mqtt_sync");
-            client->mqtt_connected = 0;
-            return 1;
-        }
-        if (client->mqtt_didnt_finish_write) {
-            client->mqtt_didnt_finish_write = 0;
-            client->poll_fds[POLLFD_SOCKET].events |= POLLOUT;
-        }
+        mws_error(client->log, "Error mqtt_sync");
+        client->mqtt_connected = 0;
+        return 1;
+    }
+    if (client->mqtt_didnt_finish_write) {
+        client->mqtt_didnt_finish_write = 0;
+        client->poll_fds[POLLFD_SOCKET].events |= POLLOUT;
     }
     return 0;
 }
@@ -901,15 +909,19 @@ static int handle_mqtt_mqtt_c(mqtt_wss_client client)
 static int handle_mqtt_internal(mqtt_wss_client client)
 {
     (void)client;
+    mqtt_ng_sync(client->mqtt.mqtt_ctx);
     return 0;
 }
 
 static int handle_mqtt(mqtt_wss_client client)
 {
-    if(client->internal_mqtt)
-        return handle_mqtt_internal(client);
+    if(client->ws_client->state == WS_ESTABLISHED) {
+        if(client->internal_mqtt)
+            return handle_mqtt_internal(client);
 
-    return handle_mqtt_mqtt_c(client);
+        return handle_mqtt_mqtt_c(client);
+    }
+    return 0;
 }
 
 #define SEC_TO_MSEC 1000
@@ -1051,9 +1063,46 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
     return MQTT_WSS_OK;
 }
 
+#include <stdio.h>
+/*
+ * Prints count chars of mem to console or log.
+ */
+void printMem(const unsigned char mem[], int count)
+{
+    int i, k = 0;
+    char hexbyte[11] = "";
+    char hexline[126] = "";
+    for (i=0; i<count; i++) { // traverse through mem until count is reached
+        sprintf(hexbyte, "0x%02X ", mem[i]); // add current byte to hexbyte
+        strcat(hexline, hexbyte); // add hexbyte to hexline
+        // print line every 16 bytes or if this is the last for-loop
+        if (((i+1)%16 == 0) && (i != 0) || (i+1==count)) {
+            k++;
+            // choose your favourite output:
+            printf("l%d: %s\n",k , hexline); // print line to console
+            //syslog(LOG_INFO, "l%d: %s",k , hexline); // print line to syslog
+            //printk(KERN_INFO "l%d: %s",k , hexline); // print line to kernellog
+            memset(&hexline[0], 0, sizeof(hexline)); // clear hexline array
+        }
+    }
+}
+
+
 ssize_t mqtt_pal_sendall(mqtt_pal_socket_handle mqtt_wss_client, const void* buf, size_t len, int flags)
 {
     (void)flags;
+/*    if (len) {
+        ((char*)buf)[2] = 0x20;
+        len = 32;
+    }*/
+
+    FILE * fp;
+
+   fp = fopen ("file.txt", "w");
+   fwrite(buf, len, 1, fp);
+   
+   fclose(fp);
+    printMem(buf, len);
 #ifdef DEBUG_ULTRA_VERBOSE
     mws_debug(mqtt_wss_client->log, "mqtt_pal_sendall(len=%d)", len);
 #endif

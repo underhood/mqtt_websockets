@@ -34,6 +34,7 @@
 typedef uint16_t buffer_frag_flag_t;
 struct buffer_fragment {
     size_t len;
+    size_t sent;
     buffer_frag_flag_t flags;
     void (*free_fnc)(void *ptr);
     char *data;
@@ -55,6 +56,13 @@ struct header_buffer {
     struct buffer_fragment *tail_frag;
 };
 
+enum mqtt_client_state {
+    RAW = 0,
+    CONNECT_PENDING,
+    CONNECTING,
+    CONNECTED
+};
+
 struct mqtt_ng_client {
     struct header_buffer buf;
     // used while building new message
@@ -68,6 +76,12 @@ struct mqtt_ng_client {
     mqtt_msg_data connect_msg;
 
     mqtt_wss_log_ctx_t log;
+
+    rbuf_t received_data;
+    mqtt_ng_send_fnc_t send_fnc_ptr;
+    void *user_ctx;
+
+    struct buffer_fragment *sending_frag;
 };
 
 int uint32_to_mqtt_vbi(uint32_t input, char *output) {
@@ -148,7 +162,7 @@ int test_uint32_mqtt_vbi() {
 #endif /* TESTS */
 
 #define HEADER_BUFFER_SIZE 1024*1024
-struct mqtt_ng_client *mqtt_ng_init(mqtt_wss_log_ctx_t log) {
+struct mqtt_ng_client *mqtt_ng_init(mqtt_wss_log_ctx_t log, rbuf_t data_in, mqtt_ng_send_fnc_t send_fnc, void *user_ctx) {
     struct mqtt_ng_client *client = calloc(1, sizeof(struct mqtt_ng_client) + HEADER_BUFFER_SIZE);
     if (client == NULL)
         return NULL;
@@ -159,6 +173,10 @@ struct mqtt_ng_client *mqtt_ng_init(mqtt_wss_log_ctx_t log) {
     client->buf.data = ((char*)client) + sizeof(struct mqtt_ng_client);
     client->buf.tail = client->buf.data;
     client->buf.tail_frag = NULL;
+
+    client->received_data = data_in;
+    client->send_fnc_ptr = send_fnc;
+    client->user_ctx = user_ctx;
 
     client->log = log;
 
@@ -374,6 +392,54 @@ static int _optimized_add(struct mqtt_ng_client *client, void *data, size_t data
     return 0;
 }
 
+
+#include <stdio.h>
+/*
+ * Prints count chars of mem to console or log.
+ */
+void printMemory(const unsigned char mem[], int count)
+{
+    int i, k = 0;
+    char hexbyte[11] = "";
+    char hexline[126] = "";
+    for (i=0; i<count; i++) { // traverse through mem until count is reached
+        sprintf(hexbyte, "0x%02X ", mem[i]); // add current byte to hexbyte
+        strcat(hexline, hexbyte); // add hexbyte to hexline
+        // print line every 16 bytes or if this is the last for-loop
+        if (((i+1)%16 == 0) && (i != 0) || (i+1==count)) {
+            k++;
+            // choose your favourite output:
+            printf("l%d: %s\n",k , hexline); // print line to console
+            //syslog(LOG_INFO, "l%d: %s",k , hexline); // print line to syslog
+            //printk(KERN_INFO "l%d: %s",k , hexline); // print line to kernellog
+            memset(&hexline[0], 0, sizeof(hexline)); // clear hexline array
+        }
+    }
+}
+
+void dump_buffer_fragment(struct buffer_fragment *frag)
+{
+    int i = 0;
+    while(frag) {
+        printf("Fragment %d, len %zu, flags", i++, frag->len);
+        if (frag->flags & BUFFER_FRAG_GARBAGE_COLLECT) {
+            printf(" BUFFER_FRAG_GARBAGE_COLLECT");
+        }
+        if (frag->flags & BUFFER_FRAG_DATA_EXTERNAL) {
+            printf(" BUFFER_FRAG_DATA_EXTERNAL");
+        }
+        if (frag->flags & BUFFER_FRAG_MQTT_PACKET_HEAD) {
+            printf(" BUFFER_FRAG_MQTT_PACKET_HEAD");
+        }
+        if (frag->flags & BUFFER_FRAG_MQTT_PACKET_TAIL) {
+            printf(" BUFFER_FRAG_MQTT_PACKET_TAIL");
+        }
+        printf(":\n");
+        printMemory(frag->data, frag->len);
+        frag = frag->next;
+    }
+}
+
 mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
                                        struct mqtt_auth_properties *auth,
                                        struct mqtt_lwt_properties *lwt,
@@ -533,17 +599,82 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
         ERROR("Cannot connect already connected (or connecting) client");
         return 1;
     }
-    mqtt_msg_data connect_msg = mqtt_ng_generate_connect(client, auth, lwt, clean_start, keep_alive);
-    if (connect_msg == NULL)
+    client->connect_msg = mqtt_ng_generate_connect(client, auth, lwt, clean_start, keep_alive);
+    if (client->connect_msg == NULL) {
         return 1;
+    }
 
-    client->client_state = CONNECTING;
-    client->connect_msg = connect_msg;
+        dump_buffer_fragment(client->connect_msg);
+
+    client->client_state = CONNECT_PENDING;
     return 0;
 }
+
+//    dump_buffer_fragment(client->buf.data);
 
 // this dummy exists to have a special pointer with special meaning
 // other than NULL
 void _caller_responsibility(void *ptr) {
     (void)(ptr);
+}
+
+// set next MQTT message to send (pointer to first fragment)
+// return 1 if nothing to send
+// return 0 if there is fragment set
+static int mqtt_ng_next_to_send(struct mqtt_ng_client *client) {
+    if (client->client_state == CONNECT_PENDING) {
+        client->sending_frag = client->connect_msg;
+        client->client_state = CONNECTING;
+        return 0;
+    }
+    return 1;
+}
+
+// send current fragment
+// return 0 if whole remaining length could be sent as a whole
+// return -1 if send buffer was filled and
+// nothing could be written anymore
+// return 1 if last fragment of a message was fully sent
+static int send_fragment(struct mqtt_ng_client *client) {
+    struct buffer_fragment *frag = client->sending_frag;
+
+    // for readability
+    char *ptr = frag->data + frag->sent;
+    size_t bytes = frag->len - frag->sent;
+
+    size_t processed = client->send_fnc_ptr(client->user_ctx, ptr, bytes);
+
+    frag->sent += processed;
+    if (frag->sent != frag->len)
+        return -1;
+
+    if (frag->flags & BUFFER_FRAG_MQTT_PACKET_TAIL) {
+        client->sending_frag = NULL;
+        return 1;
+    }
+
+    client->sending_frag = frag->next;
+    
+    return 0;
+}
+
+// attempt sending all fragments of current MQTT packet
+static int send_fragments(struct mqtt_ng_client *client) {
+    int rc;
+    while ( !(rc = send_fragment(client)) );
+    return 1;
+}
+
+static void try_send_all(struct mqtt_ng_client *client) {
+    while (client->sending_frag || !mqtt_ng_next_to_send(client)) {
+        send_fragments(client);
+    }
+}
+
+int mqtt_ng_sync(struct mqtt_ng_client *client) {
+    if (client->client_state == RAW)
+        return 0;
+    try_send_all(client);
+    ERROR("RCVD: %d", rbuf_bytes_available(client->received_data));
+    return 0;
 }
