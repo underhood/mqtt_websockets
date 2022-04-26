@@ -488,8 +488,6 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
 
     *WRITE_POS(frag) = MQTT_CPT_CONNECT << 4;
     DATA_ADVANCE(1, frag);
-    uint32_t a;
-    printf("Data %d, LEn fnc %d, Len macro %d\n", size, uint32_to_mqtt_vbi(size, &a), MQTT_VARSIZE_INT_BYTES(size));
     DATA_ADVANCE(uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
 
     memcpy(WRITE_POS(frag), mqtt_protocol_name_frag, sizeof(mqtt_protocol_name_frag));
