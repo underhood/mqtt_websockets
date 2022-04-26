@@ -148,6 +148,20 @@ static void mws_connack_callback(struct mqtt_client* client, enum MQTTConnackRet
     }
 }
 
+static void mws_connack_callback_ng(void *user_ctx, int code)
+{
+    mqtt_wss_client client = user_ctx;
+    switch(code) {
+        case 0:
+            client->mqtt_connected = 1;
+            return;
+//TODO manual labor: all the CONNACK error codes with some nice error message
+        default:
+            mws_error(client->log, "MQTT CONNACK returned error %d", code);
+            return;
+    }
+}
+
 static void mws_puback_callback(struct mqtt_client* client, uint16_t packet_id)
 {
 #ifdef DEBUG_ULTRA_VERBOSE
@@ -298,7 +312,7 @@ mqtt_wss_client mqtt_wss_new(const char *log_prefix,
             .data_in = client->ws_client->buf_to_mqtt,
             .data_out_fnc = &mqtt_ng_send,
             .user_ctx = client,
-            .connack_callback = NULL
+            .connack_callback = &mws_connack_callback_ng
         };
         if ( (client->mqtt.mqtt_ctx = mqtt_ng_init(&settings)) == NULL ) {
             mws_error(log, "Error initializing internal MQTT client");

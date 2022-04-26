@@ -145,7 +145,7 @@ struct mqtt_ng_client {
 
     struct mqtt_ng_parser parser;
 
-    void (*connack_callback)(int);
+    void (*connack_callback)(void* user_ctx, int connack_reply);
 };
 
 int uint32_to_mqtt_vbi(uint32_t input, char *output) {
@@ -926,7 +926,7 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
         switch (get_control_packet_type(&client->parser)) {
             case MQTT_CPT_CONNACK:
                 if (client->connack_callback)
-                    client->connack_callback(client->parser.mqtt_packet.connack.reason_code);
+                    client->connack_callback(client->user_ctx, client->parser.mqtt_packet.connack.reason_code);
                 if (!client->parser.mqtt_packet.connack.reason_code) {
                     INFO("MQTT Connection Accepted By Server");
                     client->client_state = CONNECTED;
