@@ -1,5 +1,7 @@
 #include <stdint.h>
 
+#include "ringbuffer.h"
+
 struct mqtt_ng_client;
 
 struct mqtt_connect {
@@ -55,4 +57,17 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
                     uint8_t clean_start,
                     uint16_t keep_alive);
 
-struct mqtt_ng_client *mqtt_ng_init(mqtt_wss_log_ctx_t log);
+typedef ssize_t (*mqtt_ng_send_fnc_t)(void *user_ctx, const void* buf, size_t len);
+
+struct mqtt_ng_init {
+    mqtt_wss_log_ctx_t log;
+    rbuf_t data_in;
+    mqtt_ng_send_fnc_t data_out_fnc;
+    void *user_ctx;
+
+    void (*connack_callback)(int);
+};
+
+struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings);
+
+int mqtt_ng_sync(struct mqtt_ng_client *client);

@@ -235,6 +235,13 @@ static int mqtt_c_init(mqtt_wss_client client, msg_callback_fnc_t msg_callback) 
     return 0;
 }
 
+ssize_t mqtt_ng_send(void *user_ctx, const void* buf, size_t len)
+{
+//    mqtt_wss_client *ctx = (mqtt_wss_client*)user_ctx;
+    mqtt_pal_socket_handle ctx = (mqtt_pal_socket_handle)user_ctx;
+    return mqtt_pal_sendall(ctx, buf, len, 0);
+}
+
 mqtt_wss_client mqtt_wss_new(const char *log_prefix,
                              mqtt_wss_log_callback_t log_callback,
                              msg_callback_fnc_t msg_callback,
@@ -286,7 +293,14 @@ mqtt_wss_client mqtt_wss_new(const char *log_prefix,
     client->poll_fds[POLLFD_SOCKET].events = POLLIN;
 
     if (client->internal_mqtt) {
-        if ( (client->mqtt.mqtt_ctx = mqtt_ng_init(log)) == NULL ) {
+        struct mqtt_ng_init settings = {
+            .log = log,
+            .data_in = client->ws_client->buf_to_mqtt,
+            .data_out_fnc = &mqtt_ng_send,
+            .user_ctx = client,
+            .connack_callback = NULL
+        };
+        if ( (client->mqtt.mqtt_ctx = mqtt_ng_init(&settings)) == NULL ) {
             mws_error(log, "Error initializing internal MQTT client");
             goto fail_3;
         }
@@ -876,24 +890,22 @@ static inline void set_socket_pollfds(mqtt_wss_client client, int ssl_ret) {
 
 static int handle_mqtt_mqtt_c(mqtt_wss_client client)
 {
-    if(client->ws_client->state == WS_ESTABLISHED) {
-        // we need to call this only if there has been some movements
-        // - read side is handled by POLLIN and ws_client_process
-        // - write side is handled by PIPE write every time we send MQTT
-        // message ensuring we wake up from poll
-        enum MQTTErrors mqtt_ret = mqtt_sync(client->mqtt.mqtt_c->mqtt_client);
-        if (mqtt_ret != MQTT_OK) {
+    // we need to call this only if there has been some movements
+    // - read side is handled by POLLIN and ws_client_process
+    // - write side is handled by PIPE write every time we send MQTT
+    // message ensuring we wake up from poll
+    enum MQTTErrors mqtt_ret = mqtt_sync(client->mqtt.mqtt_c->mqtt_client);
+    if (mqtt_ret != MQTT_OK) {
 //            mws_error(client->log, "Error mqtt_sync MQTT \"%s\"", mqtt_error_str(mqtt_ret));
 // TODO coverity reported bug in mqtt library here function mqtt_sync can return
 // -2 acording to coverity resulting in out of bounds access in mqtt_error_str
-            mws_error(client->log, "Error mqtt_sync");
-            client->mqtt_connected = 0;
-            return 1;
-        }
-        if (client->mqtt_didnt_finish_write) {
-            client->mqtt_didnt_finish_write = 0;
-            client->poll_fds[POLLFD_SOCKET].events |= POLLOUT;
-        }
+        mws_error(client->log, "Error mqtt_sync");
+        client->mqtt_connected = 0;
+        return 1;
+    }
+    if (client->mqtt_didnt_finish_write) {
+        client->mqtt_didnt_finish_write = 0;
+        client->poll_fds[POLLFD_SOCKET].events |= POLLOUT;
     }
     return 0;
 }
@@ -901,15 +913,19 @@ static int handle_mqtt_mqtt_c(mqtt_wss_client client)
 static int handle_mqtt_internal(mqtt_wss_client client)
 {
     (void)client;
+    mqtt_ng_sync(client->mqtt.mqtt_ctx);
     return 0;
 }
 
 static int handle_mqtt(mqtt_wss_client client)
 {
-    if(client->internal_mqtt)
-        return handle_mqtt_internal(client);
+    if(client->ws_client->state == WS_ESTABLISHED) {
+        if(client->internal_mqtt)
+            return handle_mqtt_internal(client);
 
-    return handle_mqtt_mqtt_c(client);
+        return handle_mqtt_mqtt_c(client);
+    }
+    return 0;
 }
 
 #define SEC_TO_MSEC 1000

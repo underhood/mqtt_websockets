@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <inttypes.h>
 
 #include "common_internal.h"
 #include "mqtt_constants.h"
@@ -34,6 +35,7 @@
 typedef uint16_t buffer_frag_flag_t;
 struct buffer_fragment {
     size_t len;
+    size_t sent;
     buffer_frag_flag_t flags;
     void (*free_fnc)(void *ptr);
     char *data;
@@ -55,6 +57,73 @@ struct header_buffer {
     struct buffer_fragment *tail_frag;
 };
 
+enum mqtt_client_state {
+    RAW = 0,
+    CONNECT_PENDING,
+    CONNECTING,
+    CONNECTED, 
+    ERROR
+};
+
+enum parser_state {
+    MQTT_PARSE_FIXED_HEADER_PACKET_TYPE = 0,
+    MQTT_PARSE_FIXED_HEADER_LEN,
+    MQTT_PARSE_VARIABLE_HEADER,
+    MQTT_PARSE_MQTT_PACKET_DONE
+};
+
+enum varhdr_parser_state {
+    MQTT_PARSE_CONNACK_FLAGS,
+    MQTT_PARSE_VARHDR_PROPS
+};
+
+struct mqtt_vbi_parser_ctx {
+    char data[MQTT_VBI_MAXBYTES];
+    uint8_t bytes;
+    uint32_t result;
+};
+
+struct mqtt_property {
+    uint32_t id;
+    struct mqtt_property *next;
+};
+
+enum mqtt_properties_parser_state {
+    PROPERTIES_LENGTH = 0,
+    PROPERTY_ID
+};
+
+struct mqtt_properties_parser_ctx {
+    enum mqtt_properties_parser_state state;
+    struct mqtt_property *head;
+    uint32_t properties_length;
+    struct mqtt_vbi_parser_ctx vbi_parser_ctx;
+};
+
+struct mqtt_connack {
+    uint8_t flags;
+    uint8_t reason_code;
+};
+
+struct mqtt_ng_parser {
+    rbuf_t received_data;
+
+    uint8_t mqtt_control_packet_type;
+    uint32_t mqtt_fixed_hdr_remaining_length;
+
+    struct mqtt_vbi_parser_ctx vbi_parser;
+    struct mqtt_properties_parser_ctx properties_parser;
+
+    enum parser_state state;
+    enum varhdr_parser_state varhdr_state;
+
+    struct mqtt_property *varhdr_properties;
+
+    union {
+        struct mqtt_connack connack;
+    } mqtt_packet;
+};
+
 struct mqtt_ng_client {
     struct header_buffer buf;
     // used while building new message
@@ -68,6 +137,15 @@ struct mqtt_ng_client {
     mqtt_msg_data connect_msg;
 
     mqtt_wss_log_ctx_t log;
+
+    mqtt_ng_send_fnc_t send_fnc_ptr;
+    void *user_ctx;
+
+    struct buffer_fragment *sending_frag;
+
+    struct mqtt_ng_parser parser;
+
+    void (*connack_callback)(int);
 };
 
 int uint32_to_mqtt_vbi(uint32_t input, char *output) {
@@ -197,7 +275,9 @@ int test_mqtt_vbi_to_uint32() {
 #endif /* TESTS */
 
 #define HEADER_BUFFER_SIZE 1024*1024
-struct mqtt_ng_client *mqtt_ng_init(mqtt_wss_log_ctx_t log) {
+//struct mqtt_ng_client *mqtt_ng_init(mqtt_wss_log_ctx_t log, rbuf_t data_in, mqtt_ng_send_fnc_t send_fnc, void *user_ctx) {
+struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings)
+{
     struct mqtt_ng_client *client = calloc(1, sizeof(struct mqtt_ng_client) + HEADER_BUFFER_SIZE);
     if (client == NULL)
         return NULL;
@@ -209,7 +289,14 @@ struct mqtt_ng_client *mqtt_ng_init(mqtt_wss_log_ctx_t log) {
     client->buf.tail = client->buf.data;
     client->buf.tail_frag = NULL;
 
-    client->log = log;
+    // TODO just embed the struct into mqtt_ng_client
+    client->parser.received_data = settings->data_in;
+    client->send_fnc_ptr = settings->data_out_fnc;
+    client->user_ctx = settings->user_ctx;
+
+    client->log = settings->log;
+
+    client->connack_callback = settings->connack_callback;
 
     return client;
 }
@@ -423,6 +510,54 @@ static int _optimized_add(struct mqtt_ng_client *client, void *data, size_t data
     return 0;
 }
 
+
+#include <stdio.h>
+/*
+ * Prints count chars of mem to console or log.
+ */
+void printMemory(const unsigned char mem[], int count)
+{
+    int i, k = 0;
+    char hexbyte[11] = "";
+    char hexline[126] = "";
+    for (i=0; i<count; i++) { // traverse through mem until count is reached
+        sprintf(hexbyte, "0x%02X ", mem[i]); // add current byte to hexbyte
+        strcat(hexline, hexbyte); // add hexbyte to hexline
+        // print line every 16 bytes or if this is the last for-loop
+        if (((i+1)%16 == 0) && (i != 0) || (i+1==count)) {
+            k++;
+            // choose your favourite output:
+            printf("l%d: %s\n",k , hexline); // print line to console
+            //syslog(LOG_INFO, "l%d: %s",k , hexline); // print line to syslog
+            //printk(KERN_INFO "l%d: %s",k , hexline); // print line to kernellog
+            memset(&hexline[0], 0, sizeof(hexline)); // clear hexline array
+        }
+    }
+}
+
+void dump_buffer_fragment(struct buffer_fragment *frag)
+{
+    int i = 0;
+    while(frag) {
+        printf("Fragment %d, len %zu, flags", i++, frag->len);
+        if (frag->flags & BUFFER_FRAG_GARBAGE_COLLECT) {
+            printf(" BUFFER_FRAG_GARBAGE_COLLECT");
+        }
+        if (frag->flags & BUFFER_FRAG_DATA_EXTERNAL) {
+            printf(" BUFFER_FRAG_DATA_EXTERNAL");
+        }
+        if (frag->flags & BUFFER_FRAG_MQTT_PACKET_HEAD) {
+            printf(" BUFFER_FRAG_MQTT_PACKET_HEAD");
+        }
+        if (frag->flags & BUFFER_FRAG_MQTT_PACKET_TAIL) {
+            printf(" BUFFER_FRAG_MQTT_PACKET_TAIL");
+        }
+        printf(":\n");
+        printMemory(frag->data, frag->len);
+        frag = frag->next;
+    }
+}
+
 mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
                                        struct mqtt_auth_properties *auth,
                                        struct mqtt_lwt_properties *lwt,
@@ -580,12 +715,12 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
         ERROR("Cannot connect already connected (or connecting) client");
         return 1;
     }
-    mqtt_msg_data connect_msg = mqtt_ng_generate_connect(client, auth, lwt, clean_start, keep_alive);
-    if (connect_msg == NULL)
+    client->connect_msg = mqtt_ng_generate_connect(client, auth, lwt, clean_start, keep_alive);
+    if (client->connect_msg == NULL) {
         return 1;
+    }
 
-    client->client_state = CONNECTING;
-    client->connect_msg = connect_msg;
+    client->client_state = CONNECT_PENDING;
     return 0;
 }
 
@@ -593,4 +728,224 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
 // other than NULL
 void _caller_responsibility(void *ptr) {
     (void)(ptr);
+}
+
+#define MQTT_NG_CLIENT_NEED_MORE_BYTES  0x10
+#define MQTT_NG_CLIENT_MQTT_PACKET_DONE 0x11
+#define MQTT_NG_CLIENT_PARSE_DONE       0x12
+#define MQTT_NG_CLIENT_OK_CALL_AGAIN    0x00
+#define MQTT_NG_CLIENT_PROTOCOL_ERROR  -0x01
+#define MQTT_NG_CLIENT_NOT_IMPL_YET    -0x02
+
+#define BUF_READ_CHECK_AT_LEAST(buf, x)                 \
+    if (rbuf_bytes_available(buf) < (x)) \
+        return MQTT_NG_CLIENT_NEED_MORE_BYTES;
+
+#define vbi_parser_reset_ctx(ctx) memset(ctx, 0, sizeof(struct mqtt_vbi_parser_ctx))
+
+static int vbi_parser_parse(struct mqtt_vbi_parser_ctx *ctx, rbuf_t data, mqtt_wss_log_ctx_t log)
+{
+    if (ctx->bytes > MQTT_VBI_MAXBYTES) {
+        mws_error(log, "MQTT Variable Byte Integer can't be longer than %d bytes", MQTT_VBI_MAXBYTES);
+        return MQTT_NG_CLIENT_PROTOCOL_ERROR;
+    }
+    if (!ctx->bytes || ctx->data[ctx->bytes-1] & MQTT_VBI_CONTINUATION_FLAG) {
+        BUF_READ_CHECK_AT_LEAST(data, 1);
+        ctx->bytes++;
+        rbuf_pop(data, &ctx->data[ctx->bytes-1], 1);
+        if ( ctx->data[ctx->bytes-1] & MQTT_VBI_CONTINUATION_FLAG )
+            return MQTT_NG_CLIENT_NEED_MORE_BYTES;
+    }
+
+    if (mqtt_vbi_to_uint32(ctx->data, &ctx->result)) {
+            mws_error(log, "MQTT Variable Byte Integer failed to be parsed.");
+            return MQTT_NG_CLIENT_PROTOCOL_ERROR;
+    }
+
+    return MQTT_NG_CLIENT_PARSE_DONE;
+}
+
+static void mqtt_properties_parser_ctx_reset(struct mqtt_properties_parser_ctx *ctx)
+{
+    ctx->state = PROPERTIES_LENGTH;
+    ctx->head = NULL;
+    ctx->properties_length = 0;
+    vbi_parser_reset_ctx(&ctx->vbi_parser_ctx);
+}
+
+// Parses [MQTT-2.2.2]
+static int parse_properties_array(struct mqtt_properties_parser_ctx *ctx, rbuf_t data, mqtt_wss_log_ctx_t log)
+{
+    int rc;
+    switch (ctx->state) {
+        case PROPERTIES_LENGTH:
+            rc = vbi_parser_parse(&ctx->vbi_parser_ctx, data, log);
+            if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
+                ctx->properties_length = ctx->vbi_parser_ctx.result;
+                if (!ctx->properties_length)
+                    return MQTT_NG_CLIENT_PARSE_DONE;
+                ctx->state = PROPERTY_ID;
+                vbi_parser_reset_ctx(&ctx->vbi_parser_ctx);
+                break;
+            }
+            return rc;
+        case PROPERTY_ID:
+            // TODO ignore for now... just skip
+            rbuf_bump_tail(data, ctx->properties_length);
+            return MQTT_NG_CLIENT_PARSE_DONE;
+//            rc = vbi_parser_parse(&ctx->vbi_parser_ctx, data, log);
+    }
+    return MQTT_NG_CLIENT_OK_CALL_AGAIN;
+}
+
+static int parse_connack_varhdr(struct mqtt_ng_client *client)
+{
+    struct mqtt_ng_parser *parser = &client->parser;
+    switch (parser->varhdr_state) {
+        case MQTT_PARSE_CONNACK_FLAGS:
+            BUF_READ_CHECK_AT_LEAST(parser->received_data, 2);
+            rbuf_pop(parser->received_data, &parser->mqtt_packet.connack.flags, 1);
+            rbuf_pop(parser->received_data, &parser->mqtt_packet.connack.reason_code, 1);
+            parser->varhdr_state = MQTT_PARSE_VARHDR_PROPS;
+            mqtt_properties_parser_ctx_reset(&parser->properties_parser);
+            break;
+        case MQTT_PARSE_VARHDR_PROPS:
+            return parse_properties_array(&parser->properties_parser, parser->received_data, client->log);
+    }
+    return MQTT_NG_CLIENT_OK_CALL_AGAIN;
+}
+
+static inline uint8_t get_control_packet_type(struct mqtt_ng_parser *parser)
+{
+    return parser->mqtt_control_packet_type >> 4;
+}
+
+// TODO move to separate file, dont send whole client pointer just to be able
+// to access LOG context send parser only which should include log
+static int parse_data(struct mqtt_ng_client *client)
+{
+    struct mqtt_ng_parser *parser = &client->parser;
+    switch(parser->state) {
+        case MQTT_PARSE_FIXED_HEADER_PACKET_TYPE:
+            BUF_READ_CHECK_AT_LEAST(parser->received_data, 1);
+            rbuf_pop(parser->received_data, (char*)&parser->mqtt_control_packet_type, 1);
+            vbi_parser_reset_ctx(&parser->vbi_parser);
+            parser->state = MQTT_PARSE_FIXED_HEADER_LEN;
+            break;
+        case MQTT_PARSE_FIXED_HEADER_LEN:
+            int rc = vbi_parser_parse(&parser->vbi_parser, parser->received_data, client->log);
+            if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
+                parser->mqtt_fixed_hdr_remaining_length = parser->vbi_parser.result;
+                parser->state = MQTT_PARSE_VARIABLE_HEADER;
+                parser->varhdr_state = MQTT_PARSE_CONNACK_FLAGS;
+                break;
+            }
+            return rc;
+        case MQTT_PARSE_VARIABLE_HEADER:
+            switch (get_control_packet_type(parser)) {
+                case MQTT_CPT_CONNACK:
+                    int rc = parse_connack_varhdr(client);
+                    if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
+                        parser->state = MQTT_PARSE_MQTT_PACKET_DONE;
+                        break;
+                    }
+                    return rc;
+                default:
+                    ERROR("Parsing Control Packet Type %" PRIu8 " not implemented yet.", get_control_packet_type(parser));
+                    return MQTT_NG_CLIENT_NOT_IMPL_YET;
+            }
+            // we could also return MQTT_NG_CLIENT_OK_CALL_AGAIN
+            // and be called again later
+            /* FALLTHROUGH */
+        case MQTT_PARSE_MQTT_PACKET_DONE:
+            parser->state = MQTT_PARSE_FIXED_HEADER_PACKET_TYPE;
+            return MQTT_NG_CLIENT_MQTT_PACKET_DONE;
+    }
+    return MQTT_NG_CLIENT_OK_CALL_AGAIN;
+}
+
+// set next MQTT message to send (pointer to first fragment)
+// return 1 if nothing to send
+// return 0 if there is fragment set
+static int mqtt_ng_next_to_send(struct mqtt_ng_client *client) {
+    if (client->client_state == CONNECT_PENDING) {
+        client->sending_frag = client->connect_msg;
+        client->client_state = CONNECTING;
+        return 0;
+    }
+    return 1;
+}
+
+// send current fragment
+// return 0 if whole remaining length could be sent as a whole
+// return -1 if send buffer was filled and
+// nothing could be written anymore
+// return 1 if last fragment of a message was fully sent
+static int send_fragment(struct mqtt_ng_client *client) {
+    struct buffer_fragment *frag = client->sending_frag;
+
+    // for readability
+    char *ptr = frag->data + frag->sent;
+    size_t bytes = frag->len - frag->sent;
+
+    size_t processed = client->send_fnc_ptr(client->user_ctx, ptr, bytes);
+
+    frag->sent += processed;
+    if (frag->sent != frag->len)
+        return -1;
+
+    if (frag->flags & BUFFER_FRAG_MQTT_PACKET_TAIL) {
+        client->sending_frag = NULL;
+        return 1;
+    }
+
+    client->sending_frag = frag->next;
+    
+    return 0;
+}
+
+// attempt sending all fragments of current MQTT packet
+static int send_fragments(struct mqtt_ng_client *client) {
+    int rc;
+    while ( !(rc = send_fragment(client)) );
+    return 1;
+}
+
+static void try_send_all(struct mqtt_ng_client *client) {
+    while (client->sending_frag || !mqtt_ng_next_to_send(client)) {
+        send_fragments(client);
+    }
+}
+
+int handle_incoming_traffic(struct mqtt_ng_client *client)
+{
+    int rc;
+    while( (rc = parse_data(client)) == MQTT_NG_CLIENT_OK_CALL_AGAIN );
+    ERROR("Parse Data EC=%d",rc);
+    if ( rc == MQTT_NG_CLIENT_MQTT_PACKET_DONE ) {
+        switch (get_control_packet_type(&client->parser)) {
+            case MQTT_CPT_CONNACK:
+                if (client->connack_callback)
+                    client->connack_callback(client->parser.mqtt_packet.connack.reason_code);
+                if (!client->parser.mqtt_packet.connack.reason_code) {
+                    INFO("MQTT Connection Accepted By Server");
+                    client->client_state = CONNECTED;
+                    break;
+                }
+                client->client_state = ERROR;
+        }
+    }
+
+    return rc;
+}
+
+int mqtt_ng_sync(struct mqtt_ng_client *client)
+{
+    if (client->client_state == RAW)
+        return 0;
+    try_send_all(client);
+
+    handle_incoming_traffic(client);
+
+    return 0;
 }
