@@ -5,6 +5,13 @@
 
 #define MQTT_VERSION_5_0     0x5
 
+/* [MQTT-1.5.5] most significant bit
+   of MQTT Variable Byte Integer signifies
+   there are more bytes following */
+#define MQTT_VBI_CONTINUATION_FLAG 0x80
+#define MQTT_VBI_DATA_MASK         0x7F
+#define MQTT_VBI_MAXBYTES          4
+
 /* MQTT control packet types as defined in
    2.1.2 MQTT Control Packet type */
 #define MQTT_CPT_CONNECT     0x1

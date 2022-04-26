@@ -87,13 +87,30 @@ int uint32_to_mqtt_vbi(uint32_t input, char *output) {
     }
 
     while(input) {
-        output[i-1] = input & 0x7F;
+        output[i-1] = input & MQTT_VBI_DATA_MASK;
         input >>= 7;
         if (input)
-            output[i-1] |= 0x80;
+            output[i-1] |= MQTT_VBI_CONTINUATION_FLAG;
         i++;
     }
     return i - 1;
+}
+
+int mqtt_vbi_to_uint32(char *input, uint32_t *output) {
+    // dont want to operate directly on output
+    // as I want it to be possible for input and output
+    // pointer to be the same
+    uint32_t result = 0;
+    uint32_t multiplier = 1;
+
+    do {
+        result += (uint32_t)(*input & MQTT_VBI_DATA_MASK) * multiplier;
+        if (multiplier > 128*128*128)
+            return 1;
+        multiplier <<= 7;
+    } while (*input++ & MQTT_VBI_CONTINUATION_FLAG);
+    *output = result;
+    return 0;
 }
 
 #ifdef TESTS
@@ -109,6 +126,7 @@ static const char _mqtt_vbi_16384[MQTT_VBI_MAXLEN + 1] = { 0x80, 0x80, 0x01, 0x0
 static const char _mqtt_vbi_2097151[MQTT_VBI_MAXLEN + 1] = { 0xFF, 0xFF, 0x7F, 0x00, 0x00 };
 static const char _mqtt_vbi_2097152[MQTT_VBI_MAXLEN + 1] = { 0x80, 0x80, 0x80, 0x01, 0x00 };
 static const char _mqtt_vbi_268435455[MQTT_VBI_MAXLEN + 1] = { 0xFF, 0xFF, 0xFF, 0x7F, 0x00 };
+static const char _mqtt_vbi_999999999[MQTT_VBI_MAXLEN + 1] = { 0x80, 0x80, 0x80, 0x80, 0x01 };
 
 #define MQTT_VBI_TESTCASE(case, expected_len) \
     { \
@@ -143,6 +161,37 @@ int test_uint32_mqtt_vbi() {
         return 1;
     }
 
+    return 0;
+}
+
+#define MQTT_VBI2UINT_TESTCASE(case, expected_error) \
+    { \
+    uint32_t result; \
+    int ret = mqtt_vbi_to_uint32(_mqtt_vbi_ ## case, &result); \
+    if (ret && !(expected_error)) { \
+        fprintf(stderr, "mqtt_vbi_to_uint(case:%d, line:%d): Unexpectedly Errored\n", (case), __LINE__); \
+        return 1; \
+    } \
+    if (!ret && (expected_error)) { \
+        fprintf(stderr, "mqtt_vbi_to_uint(case:%d, line:%d): Should return error but didnt\n", (case), __LINE__); \
+        return 1; \
+    } \
+    if (!ret && result != (case)) { \
+        fprintf(stderr, "mqtt_vbi_to_uint(case:%d, line:%d): Returned wrong result %d\n", (case), __LINE__, result); \
+        return 1; \
+    }}
+
+
+int test_mqtt_vbi_to_uint32() {
+    MQTT_VBI2UINT_TESTCASE(0,         0)
+    MQTT_VBI2UINT_TESTCASE(127,       0)
+    MQTT_VBI2UINT_TESTCASE(128,       0)
+    MQTT_VBI2UINT_TESTCASE(16383,     0)
+    MQTT_VBI2UINT_TESTCASE(16384,     0)
+    MQTT_VBI2UINT_TESTCASE(2097151,   0)
+    MQTT_VBI2UINT_TESTCASE(2097152,   0)
+    MQTT_VBI2UINT_TESTCASE(268435455, 0)
+    MQTT_VBI2UINT_TESTCASE(999999999, 1)
     return 0;
 }
 #endif /* TESTS */
