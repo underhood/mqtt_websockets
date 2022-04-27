@@ -728,10 +728,100 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
     return 0;
 }
 
-// this dummy exists to have a special pointer with special meaning
-// other than NULL
-void _caller_responsibility(void *ptr) {
-    (void)(ptr);
+uint16_t get_unused_packet_id() {
+    static uint16_t packet_id = 0;
+    packet_id++;
+    return packet_id ? packet_id : ++packet_id;
+}
+
+static inline size_t mqtt_ng_publish_size(const char *topic,
+                            size_t msg_len)
+{
+    return 2 /* Topic Name Length */
+        + strlen(topic)
+        + 2 /* Packet identifier */
+        + 1 /* Properties Length TODO for now fixed 0 */
+        + msg_len;
+}
+
+mqtt_msg_data mqtt_ng_generate_publish(struct mqtt_ng_client *client,
+                                       const char *topic,
+                                       free_fnc_t topic_free,
+                                       const void *msg,
+                                       free_fnc_t msg_free,
+                                       size_t msg_len,
+                                       uint8_t publish_flags,
+                                       uint16_t *packet_id)
+{
+    // >> START THE RODEO <<
+    buffer_transaction_start(client);
+
+    // Calculate the resulting message size sans fixed MQTT header
+    size_t size = mqtt_ng_publish_size(topic, msg_len);
+
+    // Start generating the message
+    struct buffer_fragment *frag = NULL;
+    mqtt_msg_data ret = NULL;
+
+    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD, frag, goto fail_rollback );
+    ret = frag;
+
+    // MQTT Fixed Header
+    size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + size - msg_len;
+    CHECK_BYTES_AVAILABLE(client, needed_bytes, goto fail_rollback);
+
+    *WRITE_POS(frag) = (MQTT_CPT_PUBLISH << 4) | (publish_flags & 0xF);
+    DATA_ADVANCE(1, frag);
+    DATA_ADVANCE(uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
+
+    // MQTT Variable Header
+    // [MQTT-3.3.2.1]
+    PACK_2B_INT(strlen(topic), frag);
+    if (_optimized_add(client, topic, strlen(topic), topic_free, &frag))
+        goto fail_rollback;
+    BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
+
+    // [MQTT-3.3.2.2]
+    *packet_id = get_unused_packet_id();
+    PACK_2B_INT(*packet_id, frag);
+
+    // [MQTT-3.3.2.3.1] TODO Property Length for now fixed 0
+    *WRITE_POS(frag) = 0;
+    DATA_ADVANCE(1, frag);
+
+    if( (frag = buffer_new_frag(client, BUFFER_FRAG_DATA_EXTERNAL)) == NULL ) {
+        ERROR("Out of buffer space while generating the message");
+        goto fail_rollback;
+    }
+    if (frag_set_external_data(client->log, frag, msg, msg_len, msg_free)) {
+        ERROR("Error adding external data to newly created fragment");
+        goto fail_rollback;
+    }
+
+    client->buf.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
+    buffer_transaction_commit(client);
+    dump_buffer_fragment(ret);
+    return ret;
+fail_rollback:
+    buffer_transaction_rollback(client, ret);
+    return NULL;
+}
+
+int mqtt_ng_publish(struct mqtt_ng_client *client,
+                    const char *topic,
+                    free_fnc_t topic_free,
+                    const void *msg,
+                    free_fnc_t msg_free,
+                    size_t msg_len,
+                    uint8_t publish_flags,
+                    uint16_t *packet_id)
+{
+    mqtt_msg_data generated = mqtt_ng_generate_publish(client, topic, topic_free, msg, msg_free, msg_len, publish_flags, packet_id);
+
+    if (!generated)
+        return 1;
+
+    client->sending_frag = generated;
 }
 
 #define MQTT_NG_CLIENT_NEED_MORE_BYTES  0x10
