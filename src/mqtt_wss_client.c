@@ -734,6 +734,7 @@ int mqtt_wss_connect(mqtt_wss_client client, char *host, int port, struct mqtt_c
     client->last_ec = 0;
 
     if (client->internal_mqtt) {
+        mws_info(client->log, "Going to connect using internal MQTT 5 implementation");
         struct mqtt_auth_properties auth;
         auth.client_id = (char*)mqtt_params->clientid;
         auth.client_id_free = NULL;
@@ -755,6 +756,7 @@ int mqtt_wss_connect(mqtt_wss_client client, char *host, int port, struct mqtt_c
             return 1;
         }
     } else {
+        mws_info(client->log, "Going to connect using MQTT-C (forked) as MQTT implementation");
         enum MQTTErrors ret = mqtt_connect(mqtt_c->mqtt_client,
                                            mqtt_params->clientid,
                                            mqtt_params->will_topic,
