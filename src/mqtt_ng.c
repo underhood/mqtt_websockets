@@ -73,7 +73,7 @@ enum parser_state {
 };
 
 enum varhdr_parser_state {
-    MQTT_PARSE_CONNACK_FLAGS,
+    MQTT_PARSE_VARHDR_INITIAL = 0,
     MQTT_PARSE_VARHDR_PROPS
 };
 
@@ -104,6 +104,10 @@ struct mqtt_connack {
     uint8_t flags;
     uint8_t reason_code;
 };
+struct mqtt_puback {
+    uint16_t packet_id;
+    uint8_t reason_code;
+};
 
 struct mqtt_ng_parser {
     rbuf_t received_data;
@@ -121,6 +125,7 @@ struct mqtt_ng_parser {
 
     union {
         struct mqtt_connack connack;
+        struct mqtt_puback puback;
     } mqtt_packet;
 };
 
@@ -896,10 +901,33 @@ static int parse_connack_varhdr(struct mqtt_ng_client *client)
 {
     struct mqtt_ng_parser *parser = &client->parser;
     switch (parser->varhdr_state) {
-        case MQTT_PARSE_CONNACK_FLAGS:
+        case MQTT_PARSE_VARHDR_INITIAL:
             BUF_READ_CHECK_AT_LEAST(parser->received_data, 2);
             rbuf_pop(parser->received_data, (char*)&parser->mqtt_packet.connack.flags, 1);
             rbuf_pop(parser->received_data, (char*)&parser->mqtt_packet.connack.reason_code, 1);
+            parser->varhdr_state = MQTT_PARSE_VARHDR_PROPS;
+            mqtt_properties_parser_ctx_reset(&parser->properties_parser);
+            break;
+        case MQTT_PARSE_VARHDR_PROPS:
+            return parse_properties_array(&parser->properties_parser, parser->received_data, client->log);
+    }
+    return MQTT_NG_CLIENT_OK_CALL_AGAIN;
+}
+
+static int parse_puback_varhdr(struct mqtt_ng_client *client)
+{
+    struct mqtt_ng_parser *parser = &client->parser;
+    switch (parser->varhdr_state) {
+        case MQTT_PARSE_VARHDR_INITIAL:
+            BUF_READ_CHECK_AT_LEAST(parser->received_data, 3);
+            rbuf_pop(parser->received_data, (char*)&parser->mqtt_packet.puback.packet_id, 2);
+            parser->mqtt_packet.puback.packet_id = be16toh(parser->mqtt_packet.puback.packet_id);
+            rbuf_pop(parser->received_data, (char*)&parser->mqtt_packet.puback.reason_code, 1);
+            // LOL so in CONNACK you have to have 0 byte to
+            // signify empty properties list
+            // but in PUBACK it can be ommited if remaining length is 0
+            if (parser->mqtt_fixed_hdr_remaining_length <= 3)
+                return MQTT_NG_CLIENT_PARSE_DONE;
             parser->varhdr_state = MQTT_PARSE_VARHDR_PROPS;
             mqtt_properties_parser_ctx_reset(&parser->properties_parser);
             break;
@@ -918,6 +946,7 @@ static inline uint8_t get_control_packet_type(struct mqtt_ng_parser *parser)
 // to access LOG context send parser only which should include log
 static int parse_data(struct mqtt_ng_client *client)
 {
+    int rc;
     struct mqtt_ng_parser *parser = &client->parser;
     switch(parser->state) {
         case MQTT_PARSE_FIXED_HEADER_PACKET_TYPE:
@@ -931,14 +960,21 @@ static int parse_data(struct mqtt_ng_client *client)
             if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
                 parser->mqtt_fixed_hdr_remaining_length = parser->vbi_parser.result;
                 parser->state = MQTT_PARSE_VARIABLE_HEADER;
-                parser->varhdr_state = MQTT_PARSE_CONNACK_FLAGS;
+                parser->varhdr_state = MQTT_PARSE_VARHDR_INITIAL;
                 break;
             }
             return rc;
         case MQTT_PARSE_VARIABLE_HEADER:
             switch (get_control_packet_type(parser)) {
                 case MQTT_CPT_CONNACK:
-                    int rc = parse_connack_varhdr(client);
+                    rc = parse_connack_varhdr(client);
+                    if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
+                        parser->state = MQTT_PARSE_MQTT_PACKET_DONE;
+                        break;
+                    }
+                    return rc;
+                case MQTT_CPT_PUBACK:
+                    rc = parse_puback_varhdr(client);
                     if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
                         parser->state = MQTT_PARSE_MQTT_PACKET_DONE;
                         break;
@@ -1019,6 +1055,11 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
     if ( rc == MQTT_NG_CLIENT_MQTT_PACKET_DONE ) {
         switch (get_control_packet_type(&client->parser)) {
             case MQTT_CPT_CONNACK:
+                if (client->client_state != CONNECTING) {
+                    ERROR("Received unexpected CONNACK");
+                    client->client_state = ERROR;
+                    return MQTT_NG_CLIENT_PROTOCOL_ERROR;
+                }
                 if (client->connack_callback)
                     client->connack_callback(client->user_ctx, client->parser.mqtt_packet.connack.reason_code);
                 if (!client->parser.mqtt_packet.connack.reason_code) {
@@ -1027,6 +1068,9 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
                     break;
                 }
                 client->client_state = ERROR;
+            case MQTT_CPT_PUBACK:
+                ERROR (">>>>>>>PUBACK %d", (int)client->parser.mqtt_packet.puback.packet_id);
+                break;
         }
     }
 
