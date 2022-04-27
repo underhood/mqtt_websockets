@@ -804,8 +804,8 @@ static int parse_connack_varhdr(struct mqtt_ng_client *client)
     switch (parser->varhdr_state) {
         case MQTT_PARSE_CONNACK_FLAGS:
             BUF_READ_CHECK_AT_LEAST(parser->received_data, 2);
-            rbuf_pop(parser->received_data, &parser->mqtt_packet.connack.flags, 1);
-            rbuf_pop(parser->received_data, &parser->mqtt_packet.connack.reason_code, 1);
+            rbuf_pop(parser->received_data, (char*)&parser->mqtt_packet.connack.flags, 1);
+            rbuf_pop(parser->received_data, (char*)&parser->mqtt_packet.connack.reason_code, 1);
             parser->varhdr_state = MQTT_PARSE_VARHDR_PROPS;
             mqtt_properties_parser_ctx_reset(&parser->properties_parser);
             break;
