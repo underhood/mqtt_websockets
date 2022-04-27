@@ -1,27 +1,13 @@
 #include <stdint.h>
 
 #include "ringbuffer.h"
+#include "common_public.h"
 
 struct mqtt_ng_client;
 
 struct mqtt_connect {
     
 };
-
-/* free_fnc_t in general (in whatever function or struct it is used)
- * decides how the related data will be handled.
- * - If NULL the data are copied internally (causing malloc and later free)
- * - If pointer provided the free function pointed will be called when data are no longer needed
- *   to free associated memory. This is effectively transfering ownership of that pointer to the library.
- *   This also allows caller to provide custom free function other than system one.
- * - If == CALLER_RESPONSIBILITY the library will not copy the data pointed to and will not call free
- *   at the end. This is usefull to avoid copying memory (and associated malloc/free) when data are for
- *   example static. In this case caller has to guarantee the memory pointed to will be valid for entire duration
- *   it is needed. For example by freeing the data after PUBACK is received or by data being static.
- */
-typedef void (*free_fnc_t)(void *ptr);
-void _caller_responsibility(void *ptr);
-#define CALLER_RESPONSIBILITY ((free_fnc_t)&_caller_responsibility)
 
 /* Converts integer to MQTT Variable Byte Integer as per 1.5.5 of MQTT 5 specs
  * @param input value to be converted
@@ -56,6 +42,15 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
                     struct mqtt_lwt_properties *lwt,
                     uint8_t clean_start,
                     uint16_t keep_alive);
+
+int mqtt_ng_publish(struct mqtt_ng_client *client,
+                    const char *topic,
+                    free_fnc_t topic_free,
+                    const void *msg,
+                    free_fnc_t msg_free,
+                    size_t msg_len,
+                    uint8_t publish_flags,
+                    uint16_t *packet_id);
 
 typedef ssize_t (*mqtt_ng_send_fnc_t)(void *user_ctx, const void* buf, size_t len);
 

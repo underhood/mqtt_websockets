@@ -14,9 +14,11 @@
 #ifndef MQTT_WSS_CLIENT_H
 #define MQTT_WSS_CLIENT_H
 
-#include "mqtt_wss_log.h"
 #include <stdint.h>
 #include <stddef.h> //size_t
+
+#include "mqtt_wss_log.h"
+#include "common_public.h"
 
 // All OK call me at your earliest convinience
 #define MQTT_WSS_OK              0
@@ -36,6 +38,9 @@
 
 #define MQTT_WSS_ERR_CANT_SEND_NOW -6
 #define MQTT_WSS_ERR_BLOCK_TIMEOUT -7
+// if client was initialized with MQTT 3 but MQTT 5 feature
+// was requested by user of library
+#define MQTT_WSS_ERR_CANT_DO       -8
 
 typedef struct mqtt_wss_client_struct *mqtt_wss_client;
 
@@ -138,6 +143,17 @@ int mqtt_wss_publish(mqtt_wss_client client, const char *topic, const void *msg,
 int mqtt_wss_publish_pid(mqtt_wss_client client, const char *topic, const void *msg, int msg_len, uint8_t publish_flags, uint16_t *packet_id);
 
 int mqtt_wss_publish_pid_block(mqtt_wss_client client, const char *topic, const void *msg, int msg_len, uint8_t publish_flags, uint16_t *packet_id, int timeout_ms);
+
+/* Publishes MQTT 5 message
+ */
+int mqtt_wss_publish5(mqtt_wss_client client,
+                      const char *topic,
+                      free_fnc_t topic_free,
+                      const void *msg,
+                      free_fnc_t msg_free,
+                      size_t msg_len,
+                      uint8_t publish_flags,
+                      uint16_t *packet_id);
 
 /* Subscribes to MQTT topic
  * @param client mqtt_wss_client which should do the subscription

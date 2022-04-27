@@ -1191,6 +1191,10 @@ static int mqtt_wss_handle_buffer_growth(mqtt_wss_client client, size_t msg_len)
 
 int mqtt_wss_publish_pid(mqtt_wss_client client, const char *topic, const void *msg, int msg_len, uint8_t publish_flags, uint16_t *packet_id)
 {
+    if (client->internal_mqtt) {
+        mws_error(client->log, "MQTT 5 used but legacy MQTT 3 %s was called. Ignoring.", __FUNCTION__);
+        return MQTT_WSS_ERR_CANT_DO;
+    }
     pthread_mutex_lock(&client->pub_lock);
     int rc = mqtt_wss_handle_buffer_growth(client, msg_len);
     if (rc != MQTT_WSS_OK) {
@@ -1207,6 +1211,10 @@ int mqtt_wss_publish_pid(mqtt_wss_client client, const char *topic, const void *
 #define BLOCK_POLL_SLEEP_MS 100
 int mqtt_wss_publish_pid_block(mqtt_wss_client client, const char *topic, const void *msg, int msg_len, uint8_t publish_flags, uint16_t *packet_id, int timeout_ms)
 {
+    if (client->internal_mqtt) {
+        mws_error(client->log, "MQTT 5 used but legacy MQTT 3 %s was called. Ignoring", __FUNCTION__);
+        return MQTT_WSS_ERR_CANT_DO;
+    }
     pthread_mutex_lock(&client->pub_lock);
     int rc = mqtt_wss_handle_buffer_growth(client, msg_len);
     if (rc == MQTT_WSS_ERR_TX_BUF_TOO_SMALL) {
@@ -1258,9 +1266,48 @@ int mqtt_wss_able_to_send(mqtt_wss_client client, size_t bytes)
 
 int mqtt_wss_publish(mqtt_wss_client client, const char *topic, const void *msg, int msg_len, uint8_t publish_flags)
 {
+    if (client->internal_mqtt) {
+        mws_error(client->log, "MQTT 5 used but legacy MQTT 3 %s was called. Ignoring.", __FUNCTION__);
+        return MQTT_WSS_ERR_CANT_DO;
+    }
+
     uint16_t pid;
 
     return mqtt_wss_publish_pid(client, topic, msg, msg_len, publish_flags, &pid);
+}
+
+int mqtt_wss_publish5(mqtt_wss_client client,
+                      const char *topic,
+                      free_fnc_t topic_free,
+                      const void *msg,
+                      free_fnc_t msg_free,
+                      size_t msg_len,
+                      uint8_t publish_flags,
+                      uint16_t *packet_id)
+{
+    if (!client->internal_mqtt) {
+        mws_error(client->log, "MQTT 3 used but called MQTT 5 publish. Ignoring!");
+        return MQTT_WSS_ERR_CANT_DO;
+    }
+
+    if (client->mqtt_disconnecting) {
+        mws_error(client->log, "mqtt_wss is disconnecting can't publish");
+        return 1;
+    }
+
+    if (!client->mqtt_connected) {
+        mws_error(client->log, "MQTT is offline. Can't send message.");
+        return 1;
+    }
+    uint8_t mqtt_flags = 0;
+
+    mqtt_flags = (publish_flags & MQTT_WSS_PUB_QOSMASK) << 1;
+    if (publish_flags & MQTT_WSS_PUB_RETAIN)
+        mqtt_flags |= MQTT_PUBLISH_RETAIN;
+
+    int rc = mqtt_ng_publish(client->mqtt.mqtt_ctx, topic, topic_free, msg, msg_free, msg_len, mqtt_flags, packet_id);
+    mqtt_wss_wakeup(client);
+    return rc;
 }
 
 int mqtt_wss_subscribe(mqtt_wss_client client, const char *topic, int max_qos_level)
