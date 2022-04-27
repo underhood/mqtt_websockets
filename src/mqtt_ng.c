@@ -711,10 +711,14 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
                     uint8_t clean_start,
                     uint16_t keep_alive)
 {
+    client->client_state = RAW;
+/*  // this had issue when connection was dropped on network layer
+    // mqtt client has no way of knowing about it yet
+    // I might reconsider allowing this in future 
     if (client->client_state != RAW) {
         ERROR("Cannot connect already connected (or connecting) client");
         return 1;
-    }
+    }*/
     client->connect_msg = mqtt_ng_generate_connect(client, auth, lwt, clean_start, keep_alive);
     if (client->connect_msg == NULL) {
         return 1;
