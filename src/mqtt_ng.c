@@ -74,6 +74,7 @@ enum parser_state {
 
 enum varhdr_parser_state {
     MQTT_PARSE_VARHDR_INITIAL = 0,
+    MQTT_PARSE_VARHDR_OPTIONAL_REASON_CODE,
     MQTT_PARSE_VARHDR_PROPS
 };
 
@@ -919,18 +920,30 @@ static int parse_puback_varhdr(struct mqtt_ng_client *client)
     struct mqtt_ng_parser *parser = &client->parser;
     switch (parser->varhdr_state) {
         case MQTT_PARSE_VARHDR_INITIAL:
-            BUF_READ_CHECK_AT_LEAST(parser->received_data, 3);
+            BUF_READ_CHECK_AT_LEAST(parser->received_data, 2);
             rbuf_pop(parser->received_data, (char*)&parser->mqtt_packet.puback.packet_id, 2);
             parser->mqtt_packet.puback.packet_id = be16toh(parser->mqtt_packet.puback.packet_id);
+            if (parser->mqtt_fixed_hdr_remaining_length < 3) {
+                // [MQTT-3.4.2.1] if length is not big enough for reason code
+                // it is omitted and handled same as if it was present and == 0
+                // initially missed this detail and was wondering WTF is going on (sigh)
+                parser->mqtt_packet.puback.reason_code = 0;
+                return MQTT_NG_CLIENT_PARSE_DONE;
+            }
+            parser->varhdr_state = MQTT_PARSE_VARHDR_OPTIONAL_REASON_CODE;
+            /* FALLTHROUGH */
+        case MQTT_PARSE_VARHDR_OPTIONAL_REASON_CODE:
+            BUF_READ_CHECK_AT_LEAST(parser->received_data, 1);
             rbuf_pop(parser->received_data, (char*)&parser->mqtt_packet.puback.reason_code, 1);
             // LOL so in CONNACK you have to have 0 byte to
             // signify empty properties list
-            // but in PUBACK it can be ommited if remaining length is 0
-            if (parser->mqtt_fixed_hdr_remaining_length <= 3)
+            // but in PUBACK it can be omitted if remaining length doesn't allow it (sigh)
+            if (parser->mqtt_fixed_hdr_remaining_length < 4)
                 return MQTT_NG_CLIENT_PARSE_DONE;
+
             parser->varhdr_state = MQTT_PARSE_VARHDR_PROPS;
             mqtt_properties_parser_ctx_reset(&parser->properties_parser);
-            break;
+            /* FALLTHROUGH */
         case MQTT_PARSE_VARHDR_PROPS:
             return parse_properties_array(&parser->properties_parser, parser->received_data, client->log);
     }
