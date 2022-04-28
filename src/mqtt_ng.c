@@ -130,6 +130,24 @@ struct mqtt_ng_parser {
     } mqtt_packet;
 };
 
+enum mqtt_ng_message_state {
+    PENDING = 0,
+    AWAIT_REPLY
+};
+
+struct mqtt_ng_message_info {
+    struct buffer_fragment *data_head;
+    enum mqtt_ng_message_state state;
+};
+
+struct tx_queue {
+    struct mqtt_ng_message_info *queue;
+    struct mqtt_ng_message_info *head;
+    struct mqtt_ng_message_info *tail;
+    size_t size;
+    size_t used;
+};
+
 struct mqtt_ng_client {
     struct header_buffer buf;
     // used while building new message
@@ -148,8 +166,11 @@ struct mqtt_ng_client {
     void *user_ctx;
 
     struct buffer_fragment *sending_frag;
+    struct mqtt_ng_message_info *sending_msg;
 
     struct mqtt_ng_parser parser;
+
+    struct tx_queue tx_queue;
 
     void (*connack_callback)(void* user_ctx, int connack_reply);
 };
@@ -304,7 +325,73 @@ struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings)
 
     client->connack_callback = settings->connack_callback;
 
+    size_t queue_size = 100; /* TODO MaxInflight * 4 (this is very small struct) */
+    client->tx_queue.queue = calloc( queue_size, sizeof(struct mqtt_ng_message_info));
+    client->tx_queue.size = queue_size;
+    client->tx_queue.head = client->tx_queue.queue;
+
     return client;
+}
+
+int tx_queue_add_message_tail(struct tx_queue *tx_queue, struct buffer_fragment *frag)
+{
+    if (tx_queue->used >= tx_queue->size)
+        return 1;
+
+    size_t idx = (tx_queue->head - tx_queue->queue) + tx_queue->used;
+    if (idx >= tx_queue->size)
+        idx -= tx_queue->size;
+
+    tx_queue->queue[idx].data_head = frag;
+    tx_queue->queue[idx].state = PENDING;
+    tx_queue->tail = &tx_queue->queue[idx];
+
+    tx_queue->used++;
+
+    return 0;
+}
+
+static inline struct mqtt_ng_message_info *tx_queue_at_idx(struct tx_queue *tx_queue, size_t idx)
+{
+    if (idx >= tx_queue->used)
+        return NULL;
+
+    idx = (tx_queue->head - tx_queue->queue) + idx;
+    if (idx >= tx_queue->size)
+        idx -= tx_queue->size;
+
+    tx_queue->tail = &tx_queue->queue[idx];
+    return tx_queue->tail;
+}
+
+// return next message relative to ptr or null if it was last one
+// if ptr null return first message if any
+static inline struct mqtt_ng_message_info *tx_queue_next(struct tx_queue *tx_queue, struct mqtt_ng_message_info *ptr)
+{
+    if (!tx_queue->used)
+        return NULL;
+
+    if (ptr == NULL)
+        return tx_queue->head;
+
+    if (tx_queue->tail == ptr)
+        return NULL;
+
+    ptr++;
+    if ( ptr >= &tx_queue->queue[tx_queue->size] )
+        return tx_queue->queue;
+    
+    return ptr;
+}
+
+struct mqtt_ng_message_info *tx_queue_get_next_pending_msg(struct tx_queue *tx_queue)
+{
+    struct mqtt_ng_message_info *msg = NULL;
+    while ( (msg = tx_queue_next(tx_queue, msg)) != NULL ) {
+        if (msg->state == PENDING)
+            return msg;
+    }
+    return NULL;
 }
 
 // this helps with switch statements
@@ -806,7 +893,6 @@ mqtt_msg_data mqtt_ng_generate_publish(struct mqtt_ng_client *client,
 
     client->buf.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
     buffer_transaction_commit(client);
-    dump_buffer_fragment(ret);
     return ret;
 fail_rollback:
     buffer_transaction_rollback(client, ret);
@@ -827,15 +913,19 @@ int mqtt_ng_publish(struct mqtt_ng_client *client,
     if (!generated)
         return 1;
 
-    client->sending_frag = generated;
+    if (tx_queue_add_message_tail(&client->tx_queue, generated))
+        return 1;
+
+    return 0;
 }
 
-#define MQTT_NG_CLIENT_NEED_MORE_BYTES  0x10
-#define MQTT_NG_CLIENT_MQTT_PACKET_DONE 0x11
-#define MQTT_NG_CLIENT_PARSE_DONE       0x12
-#define MQTT_NG_CLIENT_OK_CALL_AGAIN    0x00
-#define MQTT_NG_CLIENT_PROTOCOL_ERROR  -0x01
-#define MQTT_NG_CLIENT_NOT_IMPL_YET    -0x02
+#define MQTT_NG_CLIENT_NEED_MORE_BYTES         0x10
+#define MQTT_NG_CLIENT_MQTT_PACKET_DONE        0x11
+#define MQTT_NG_CLIENT_PARSE_DONE              0x12
+#define MQTT_NG_CLIENT_OK_CALL_AGAIN           0
+#define MQTT_NG_CLIENT_PROTOCOL_ERROR         -1
+#define MQTT_NG_CLIENT_SERVER_RETURNED_ERROR  -2
+#define MQTT_NG_CLIENT_NOT_IMPL_YET           -3
 
 #define BUF_READ_CHECK_AT_LEAST(buf, x)                 \
     if (rbuf_bytes_available(buf) < (x)) \
@@ -1009,6 +1099,7 @@ static int parse_data(struct mqtt_ng_client *client)
 
 // set next MQTT message to send (pointer to first fragment)
 // return 1 if nothing to send
+// return -1 on error
 // return 0 if there is fragment set
 static int mqtt_ng_next_to_send(struct mqtt_ng_client *client) {
     if (client->client_state == CONNECT_PENDING) {
@@ -1016,7 +1107,12 @@ static int mqtt_ng_next_to_send(struct mqtt_ng_client *client) {
         client->client_state = CONNECTING;
         return 0;
     }
-    return 1;
+    if (client->client_state != CONNECTED)
+        return -1;
+
+    client->sending_msg = tx_queue_get_next_pending_msg(&client->tx_queue);
+    client->sending_frag = client->sending_msg == NULL ? NULL : client->sending_msg->data_head;
+    return client->sending_frag == NULL ? 1 : 0;
 }
 
 // send current fragment
@@ -1052,17 +1148,20 @@ static int send_fragment(struct mqtt_ng_client *client) {
     return 0;
 }
 
-// attempt sending all fragments of current MQTT packet
-static int send_fragments(struct mqtt_ng_client *client) {
+// attempt sending all fragments of current single MQTT packet
+static int send_all_message_fragments(struct mqtt_ng_client *client) {
     int rc;
     while ( !(rc = send_fragment(client)) );
-    return 1;
+    if (rc == 1 && client->sending_msg)
+        client->sending_msg->state = AWAIT_REPLY;
+    return rc;
 }
 
 static void try_send_all(struct mqtt_ng_client *client) {
-    while (client->sending_frag || !mqtt_ng_next_to_send(client)) {
-        send_fragments(client);
-    }
+    do {
+        if (client->sending_frag == NULL && mqtt_ng_next_to_send(client))
+            return 0;
+    } while(!send_all_message_fragments(client));
 }
 
 int handle_incoming_traffic(struct mqtt_ng_client *client)
@@ -1086,6 +1185,7 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
                     break;
                 }
                 client->client_state = ERROR;
+                return MQTT_NG_CLIENT_SERVER_RETURNED_ERROR;
             case MQTT_CPT_PUBACK:
                 ERROR (">>>>>>>PUBACK %d", (int)client->parser.mqtt_packet.puback.packet_id);
                 break;
@@ -1099,6 +1199,7 @@ int mqtt_ng_sync(struct mqtt_ng_client *client)
 {
     if (client->client_state == RAW)
         return 0;
+
     try_send_all(client);
 
     handle_incoming_traffic(client);
