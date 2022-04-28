@@ -1031,7 +1031,12 @@ static int send_fragment(struct mqtt_ng_client *client) {
     char *ptr = frag->data + frag->sent;
     size_t bytes = frag->len - frag->sent;
 
-    size_t processed = client->send_fnc_ptr(client->user_ctx, ptr, bytes);
+    size_t processed = 0;
+
+    if (bytes)
+        processed = client->send_fnc_ptr(client->user_ctx, ptr, bytes);
+    else
+        WARN("This fragment was fully sent already. This should not happen!");
 
     frag->sent += processed;
     if (frag->sent != frag->len)
