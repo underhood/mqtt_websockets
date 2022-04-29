@@ -1324,10 +1324,19 @@ int mqtt_wss_subscribe(mqtt_wss_client client, const char *topic, int max_qos_le
         return 1;
     }
 
-    ret = mqtt_subscribe(client->mqtt.mqtt_c->mqtt_client, topic, max_qos_level);
-    if (ret != MQTT_OK) {
-        mws_error(client->log, "Error Subscribing. Desc: \"%s\"", mqtt_error_str(ret));
-        return 1;
+    if (client->internal_mqtt) {
+        struct mqtt_sub sub = {
+            .topic = topic,
+            .topic_free = NULL,
+            .options = /* max_qos_level & 0x3 TODO when QOS > 1 implemented */ 0x01 | (0x01 << 3)
+        };
+        mqtt_ng_subscribe(client->mqtt.mqtt_ctx, &sub, 1);
+    } else {
+        ret = mqtt_subscribe(client->mqtt.mqtt_c->mqtt_client, topic, max_qos_level);
+        if (ret != MQTT_OK) {
+            mws_error(client->log, "Error Subscribing. Desc: \"%s\"", mqtt_error_str(ret));
+            return 1;
+        }
     }
 
     mqtt_wss_wakeup(client);

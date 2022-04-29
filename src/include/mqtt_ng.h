@@ -52,6 +52,14 @@ int mqtt_ng_publish(struct mqtt_ng_client *client,
                     uint8_t publish_flags,
                     uint16_t *packet_id);
 
+struct mqtt_sub {
+    char *topic;
+    free_fnc_t topic_free;
+    uint8_t options;
+};
+
+int mqtt_ng_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subscriptions, size_t subscription_count);
+
 typedef ssize_t (*mqtt_ng_send_fnc_t)(void *user_ctx, const void* buf, size_t len);
 
 struct mqtt_ng_init {

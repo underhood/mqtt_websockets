@@ -919,6 +919,81 @@ int mqtt_ng_publish(struct mqtt_ng_client *client,
     return 0;
 }
 
+static inline size_t mqtt_ng_subscribe_size(struct mqtt_sub *subs, size_t sub_count)
+{
+    size_t len = 2 /* Packet Identifier */ + 1 /* Properties Length TODO for now fixed 0 */;
+    len += sub_count * (2 /* topic filter string length */ + 1 /* [MQTT-3.8.3.1] Subscription Options Byte */);
+
+    for (size_t i = 0; i < sub_count; i++) {
+        len += strlen(subs[i].topic);
+    }
+    return len;
+}
+
+mqtt_msg_data mqtt_ng_generate_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subs, size_t sub_count)
+{
+    // >> START THE RODEO <<
+    buffer_transaction_start(client);
+
+    // Calculate the resulting message size sans fixed MQTT header
+    size_t size = mqtt_ng_subscribe_size(subs, sub_count);
+
+    // Start generating the message
+    struct buffer_fragment *frag = NULL;
+    mqtt_msg_data ret = NULL;
+
+    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD, frag, goto fail_rollback);
+    ret = frag;
+
+    // MQTT Fixed Header
+    size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + 3 /*Packet ID + Property Length*/;
+    CHECK_BYTES_AVAILABLE(client, needed_bytes, goto fail_rollback);
+
+    *WRITE_POS(frag) = (MQTT_CPT_SUBSCRIBE << 4) | 0x2 /* [MQTT-3.8.1-1] */;
+    DATA_ADVANCE(1, frag);
+    DATA_ADVANCE(uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
+
+    // MQTT Variable Header
+    // [MQTT-3.8.2] PacketID
+    uint16_t packet_id = get_unused_packet_id();
+    PACK_2B_INT(packet_id, frag);
+
+    // [MQTT-3.8.2.1.1] Property Length // TODO for now fixed 0
+    *WRITE_POS(frag) = 0;
+    DATA_ADVANCE(1, frag);
+
+    for (size_t i = 0; i < sub_count; i++) {
+        BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
+        PACK_2B_INT(strlen(subs[i].topic), frag);
+        if (_optimized_add(client, subs[i].topic, strlen(subs[i].topic), subs[i].topic_free, &frag))
+            goto fail_rollback;
+        BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
+        *WRITE_POS(frag) = subs[i].options;
+        DATA_ADVANCE(1,frag);
+    }
+
+    client->buf.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
+    dump_buffer_fragment(ret);
+    buffer_transaction_commit(client);
+    return ret;
+fail_rollback:
+    buffer_transaction_rollback(client, ret);
+    return NULL;
+}
+
+int mqtt_ng_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subs, size_t sub_count)
+{
+    mqtt_msg_data generated = mqtt_ng_generate_subscribe(client, subs, sub_count);
+
+    if (!generated)
+        return 1;
+
+    if (tx_queue_add_message_tail(&client->tx_queue, generated))
+        return 1;
+
+    return 0;
+}
+
 #define MQTT_NG_CLIENT_NEED_MORE_BYTES         0x10
 #define MQTT_NG_CLIENT_MQTT_PACKET_DONE        0x11
 #define MQTT_NG_CLIENT_PARSE_DONE              0x12
@@ -1085,6 +1160,8 @@ static int parse_data(struct mqtt_ng_client *client)
                     return rc;
                 default:
                     ERROR("Parsing Control Packet Type %" PRIu8 " not implemented yet.", get_control_packet_type(parser));
+                    rbuf_bump_tail(parser->received_data, parser->mqtt_fixed_hdr_remaining_length);
+                    parser->state = MQTT_PARSE_MQTT_PACKET_DONE;
                     return MQTT_NG_CLIENT_NOT_IMPL_YET;
             }
             // we could also return MQTT_NG_CLIENT_OK_CALL_AGAIN
@@ -1160,7 +1237,7 @@ static int send_all_message_fragments(struct mqtt_ng_client *client) {
 static void try_send_all(struct mqtt_ng_client *client) {
     do {
         if (client->sending_frag == NULL && mqtt_ng_next_to_send(client))
-            return 0;
+            return;
     } while(!send_all_message_fragments(client));
 }
 
