@@ -18,6 +18,8 @@
 
 #define SMALL_STRING_DONT_FRAGMENT_LIMIT 128
 
+#define MIN(a,b) (((a)<(b))?(a):(b))
+
 #define LOCK_HDR_BUFFER(client) pthread_mutex_lock(&client->buf_mutex)
 #define UNLOCK_HDR_BUFFER(client) pthread_mutex_unlock(&client->buf_mutex)
 
@@ -75,7 +77,8 @@ enum parser_state {
 enum varhdr_parser_state {
     MQTT_PARSE_VARHDR_INITIAL = 0,
     MQTT_PARSE_VARHDR_OPTIONAL_REASON_CODE,
-    MQTT_PARSE_VARHDR_PROPS
+    MQTT_PARSE_VARHDR_PROPS,
+    MQTT_PARSE_REASONCODES
 };
 
 struct mqtt_vbi_parser_ctx {
@@ -99,6 +102,7 @@ struct mqtt_properties_parser_ctx {
     struct mqtt_property *head;
     uint32_t properties_length;
     struct mqtt_vbi_parser_ctx vbi_parser_ctx;
+    size_t bytes_consumed;
 };
 
 struct mqtt_connack {
@@ -110,11 +114,19 @@ struct mqtt_puback {
     uint8_t reason_code;
 };
 
+struct mqtt_suback {
+    uint16_t packet_id;
+    uint8_t *reason_codes;
+    uint8_t reason_code_count;
+    uint8_t reason_codes_pending;
+};
+
 struct mqtt_ng_parser {
     rbuf_t received_data;
 
     uint8_t mqtt_control_packet_type;
     uint32_t mqtt_fixed_hdr_remaining_length;
+    size_t mqtt_parsed_len;
 
     struct mqtt_vbi_parser_ctx vbi_parser;
     struct mqtt_properties_parser_ctx properties_parser;
@@ -127,6 +139,7 @@ struct mqtt_ng_parser {
     union {
         struct mqtt_connack connack;
         struct mqtt_puback puback;
+        struct mqtt_suback suback;
     } mqtt_packet;
 };
 
@@ -1035,6 +1048,7 @@ static void mqtt_properties_parser_ctx_reset(struct mqtt_properties_parser_ctx *
     ctx->state = PROPERTIES_LENGTH;
     ctx->head = NULL;
     ctx->properties_length = 0;
+    ctx->bytes_consumed = 0;
     vbi_parser_reset_ctx(&ctx->vbi_parser_ctx);
 }
 
@@ -1047,6 +1061,7 @@ static int parse_properties_array(struct mqtt_properties_parser_ctx *ctx, rbuf_t
             rc = vbi_parser_parse(&ctx->vbi_parser_ctx, data, log);
             if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
                 ctx->properties_length = ctx->vbi_parser_ctx.result;
+                ctx->bytes_consumed += ctx->vbi_parser_ctx.bytes;
                 if (!ctx->properties_length)
                     return MQTT_NG_CLIENT_PARSE_DONE;
                 ctx->state = PROPERTY_ID;
@@ -1057,6 +1072,7 @@ static int parse_properties_array(struct mqtt_properties_parser_ctx *ctx, rbuf_t
         case PROPERTY_ID:
             // TODO ignore for now... just skip
             rbuf_bump_tail(data, ctx->properties_length);
+            ctx->bytes_consumed += ctx->properties_length;
             return MQTT_NG_CLIENT_PARSE_DONE;
 //            rc = vbi_parser_parse(&ctx->vbi_parser_ctx, data, log);
     }
@@ -1115,6 +1131,44 @@ static int parse_puback_varhdr(struct mqtt_ng_client *client)
     return MQTT_NG_CLIENT_OK_CALL_AGAIN;
 }
 
+static int parse_suback_varhdr(struct mqtt_ng_client *client)
+{
+    struct mqtt_ng_parser *parser = &client->parser;
+    struct mqtt_suback *suback = &client->parser.mqtt_packet.suback;
+    switch (parser->varhdr_state) {
+        case MQTT_PARSE_VARHDR_INITIAL:
+            BUF_READ_CHECK_AT_LEAST(parser->received_data, 2);
+            rbuf_pop(parser->received_data, (char*)&suback->packet_id, 2);
+            suback->packet_id = be16toh(suback->packet_id);
+            parser->varhdr_state = MQTT_PARSE_VARHDR_PROPS;
+            parser->mqtt_parsed_len = 2;
+            mqtt_properties_parser_ctx_reset(&parser->properties_parser);
+            /* FALLTHROUGH */
+        case MQTT_PARSE_VARHDR_PROPS:
+            int rc = parse_properties_array(&parser->properties_parser, parser->received_data, client->log);
+            if (rc != MQTT_NG_CLIENT_PARSE_DONE) 
+                return rc;
+            parser->mqtt_parsed_len += parser->properties_parser.bytes_consumed;
+            suback->reason_code_count = parser->mqtt_fixed_hdr_remaining_length - parser->mqtt_parsed_len;
+            suback->reason_codes = calloc(suback->reason_code_count, sizeof(*suback->reason_codes));
+            suback->reason_codes_pending = suback->reason_code_count;
+            parser->varhdr_state = MQTT_PARSE_REASONCODES;
+            /* FALLTROUGH */
+        case MQTT_PARSE_REASONCODES:
+            size_t avail = rbuf_bytes_available(parser->received_data);
+            if (avail < 1)
+                return MQTT_NG_CLIENT_NEED_MORE_BYTES;
+
+            suback->reason_codes_pending -= rbuf_pop(parser->received_data, suback->reason_codes, MIN(suback->reason_codes_pending, avail));
+
+            if (!suback->reason_codes_pending)
+                return MQTT_NG_CLIENT_PARSE_DONE;
+
+            return MQTT_NG_CLIENT_NEED_MORE_BYTES;
+    }
+    return MQTT_NG_CLIENT_OK_CALL_AGAIN;
+}
+
 static inline uint8_t get_control_packet_type(struct mqtt_ng_parser *parser)
 {
     return parser->mqtt_control_packet_type >> 4;
@@ -1153,6 +1207,13 @@ static int parse_data(struct mqtt_ng_client *client)
                     return rc;
                 case MQTT_CPT_PUBACK:
                     rc = parse_puback_varhdr(client);
+                    if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
+                        parser->state = MQTT_PARSE_MQTT_PACKET_DONE;
+                        break;
+                    }
+                    return rc;
+                case MQTT_CPT_SUBACK:
+                    rc = parse_suback_varhdr(client);
                     if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
                         parser->state = MQTT_PARSE_MQTT_PACKET_DONE;
                         break;
