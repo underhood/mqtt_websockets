@@ -1425,6 +1425,11 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
             case MQTT_CPT_PUBLISH:
                 ERROR (">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>PUBLISH");
                 struct mqtt_publish *pub = &client->parser.mqtt_packet.publish;
+                if (pub->qos > 1) {
+                    free(pub->topic);
+                    free(pub->data);
+                    return MQTT_NG_CLIENT_NOT_IMPL_YET;
+                }
                 if (client->msg_callback)
                     client->msg_callback(pub->topic, pub->data, pub->data_len, pub->qos);
                 free(pub->topic);
