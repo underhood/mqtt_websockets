@@ -778,16 +778,18 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
     PACK_2B_INT(strlen(auth->client_id), frag);
     if (_optimized_add(client, auth->client_id, strlen(auth->client_id), auth->client_id_free, &frag))
         goto fail_rollback;
-    BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
 
     if (lwt != NULL) {
         // Will Properties [MQTT-3.1.3.2]
         // TODO for now fixed 0
+        BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
         CHECK_BYTES_AVAILABLE(client, 1, goto fail_rollback);
         *WRITE_POS(frag) = 0;
         DATA_ADVANCE(1, frag);
 
         // Will Topic [MQTT-3.1.3.3]
+        CHECK_BYTES_AVAILABLE(client, 2, goto fail_rollback);
+        PACK_2B_INT(strlen(lwt->will_topic), frag);
         if (_optimized_add(client, lwt->will_topic, strlen(lwt->will_topic), lwt->will_topic_free, &frag))
             goto fail_rollback;
 
