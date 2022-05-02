@@ -312,7 +312,8 @@ mqtt_wss_client mqtt_wss_new(const char *log_prefix,
             .data_in = client->ws_client->buf_to_mqtt,
             .data_out_fnc = &mqtt_ng_send,
             .user_ctx = client,
-            .connack_callback = &mws_connack_callback_ng
+            .connack_callback = &mws_connack_callback_ng,
+            .msg_callback = msg_callback
         };
         if ( (client->mqtt.mqtt_ctx = mqtt_ng_init(&settings)) == NULL ) {
             mws_error(log, "Error initializing internal MQTT client");

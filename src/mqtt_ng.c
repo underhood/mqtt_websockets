@@ -130,6 +130,7 @@ struct mqtt_publish {
     uint16_t packet_id;
     size_t data_len;
     char *data;
+    uint8_t qos;
 };
 
 struct mqtt_ng_parser {
@@ -198,6 +199,7 @@ struct mqtt_ng_client {
     struct tx_queue tx_queue;
 
     void (*connack_callback)(void* user_ctx, int connack_reply);
+    void (*msg_callback)(const char *topic, const void *msg, size_t msglen, int qos);
 };
 
 int uint32_to_mqtt_vbi(uint32_t input, char *output) {
@@ -349,6 +351,7 @@ struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings)
     client->log = settings->log;
 
     client->connack_callback = settings->connack_callback;
+    client->msg_callback = settings->msg_callback;
 
     size_t queue_size = 100; /* TODO MaxInflight * 4 (this is very small struct) */
     client->tx_queue.queue = calloc( queue_size, sizeof(struct mqtt_ng_message_info));
@@ -1182,7 +1185,6 @@ static int parse_suback_varhdr(struct mqtt_ng_client *client)
     return MQTT_NG_CLIENT_OK_CALL_AGAIN;
 }
 
-#define publish_get_qos(parser) ((parser->mqtt_control_packet_type >> 1) & 0x03)
 static int parse_publish_varhdr(struct mqtt_ng_client *client)
 {
     struct mqtt_ng_parser *parser = &client->parser;
@@ -1190,6 +1192,7 @@ static int parse_publish_varhdr(struct mqtt_ng_client *client)
     switch (parser->varhdr_state) {
         case MQTT_PARSE_VARHDR_INITIAL:
             BUF_READ_CHECK_AT_LEAST(parser->received_data, 2);
+            publish->qos = ((parser->mqtt_control_packet_type >> 1) & 0x03);
             rbuf_pop(parser->received_data, (char*)&publish->topic_len, 2);
             publish->topic_len = be16toh(publish->topic_len);
             publish->topic = calloc(1, publish->topic_len + 1 /* add 0x00 */);
@@ -1204,7 +1207,7 @@ static int parse_publish_varhdr(struct mqtt_ng_client *client)
             rbuf_pop(parser->received_data, publish->topic, publish->topic_len);
             parser->mqtt_parsed_len += publish->topic_len;
             mqtt_properties_parser_ctx_reset(&parser->properties_parser);
-            if (!publish_get_qos(parser)) { // PacketID present only for QOS > 0 [MQTT-3.3.2.2]
+            if (!publish->qos) { // PacketID present only for QOS > 0 [MQTT-3.3.2.2]
                 parser->varhdr_state = MQTT_PARSE_VARHDR_PROPS;
                 break;
             }
@@ -1411,7 +1414,18 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
                 client->client_state = ERROR;
                 return MQTT_NG_CLIENT_SERVER_RETURNED_ERROR;
             case MQTT_CPT_PUBACK:
-                ERROR (">>>>>>>PUBACK %d", (int)client->parser.mqtt_packet.puback.packet_id);
+                ERROR (">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>PUBACK %d", (int)client->parser.mqtt_packet.puback.packet_id);
+                break;
+            case MQTT_CPT_SUBACK:
+                ERROR (">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>SUBACK %d", (int)client->parser.mqtt_packet.suback.packet_id);
+                break;
+            case MQTT_CPT_PUBLISH:
+                ERROR (">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>PUBLISH");
+                struct mqtt_publish *pub = &client->parser.mqtt_packet.publish;
+                if (client->msg_callback)
+                    client->msg_callback(pub->topic, pub->data, pub->data_len, pub->qos);
+                free(pub->topic);
+                free(pub->data);
                 break;
         }
     }
