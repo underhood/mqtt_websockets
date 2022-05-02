@@ -1001,7 +1001,6 @@ mqtt_msg_data mqtt_ng_generate_subscribe(struct mqtt_ng_client *client, struct m
     }
 
     client->buf.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
-    dump_buffer_fragment(ret);
     buffer_transaction_commit(client);
     return ret;
 fail_rollback:
@@ -1395,7 +1394,6 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
 {
     int rc;
     while( (rc = parse_data(client)) == MQTT_NG_CLIENT_OK_CALL_AGAIN );
-    ERROR("Parse Data EC=%d",rc);
     if ( rc == MQTT_NG_CLIENT_MQTT_PACKET_DONE ) {
         switch (get_control_packet_type(&client->parser)) {
             case MQTT_CPT_CONNACK:
