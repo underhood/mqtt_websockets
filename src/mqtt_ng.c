@@ -1203,9 +1203,8 @@ static int parse_publish_varhdr(struct mqtt_ng_client *client)
             BUF_READ_CHECK_AT_LEAST(parser->received_data, publish->topic_len);
             rbuf_pop(parser->received_data, publish->topic, publish->topic_len);
             parser->mqtt_parsed_len += publish->topic_len;
-            printf(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> %d\n", (int)publish_get_qos(parser) );
             mqtt_properties_parser_ctx_reset(&parser->properties_parser);
-            if (!publish_get_qos(parser)) {
+            if (!publish_get_qos(parser)) { // PacketID present only for QOS > 0 [MQTT-3.3.2.2]
                 parser->varhdr_state = MQTT_PARSE_VARHDR_PROPS;
                 break;
             }
@@ -1233,7 +1232,7 @@ static int parse_publish_varhdr(struct mqtt_ng_client *client)
             publish->data_len = parser->mqtt_fixed_hdr_remaining_length - parser->mqtt_parsed_len;
             if (!publish->data_len) {
                 publish->data = NULL;
-                return MQTT_NG_CLIENT_PARSE_DONE; // 0 Length payload is OK
+                return MQTT_NG_CLIENT_PARSE_DONE; // 0 length payload is OK [MQTT-3.3.3]
             }
             BUF_READ_CHECK_AT_LEAST(parser->received_data, publish->data_len);
 
