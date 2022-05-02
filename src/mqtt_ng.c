@@ -1228,6 +1228,8 @@ static int parse_publish_varhdr(struct mqtt_ng_client *client)
             /* FALLTROUGH */
         case MQTT_PARSE_PAYLOAD:
             if (parser->mqtt_fixed_hdr_remaining_length < parser->mqtt_parsed_len) {
+                free(publish->topic);
+                publish->topic = NULL;
                 ERROR("Error parsing PUBLISH message");
                 return MQTT_NG_CLIENT_PROTOCOL_ERROR;
             }
@@ -1239,8 +1241,11 @@ static int parse_publish_varhdr(struct mqtt_ng_client *client)
             BUF_READ_CHECK_AT_LEAST(parser->received_data, publish->data_len);
 
             publish->data = malloc(publish->data_len);
-            if (publish->data == NULL)
+            if (publish->data == NULL) {
+                free(publish->topic);
+                publish->topic = NULL;
                 return MQTT_NG_CLIENT_OOM;
+            }
 
             rbuf_pop(parser->received_data, publish->data, publish->data_len);
             parser->mqtt_parsed_len += publish->data_len;
