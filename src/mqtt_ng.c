@@ -78,7 +78,10 @@ enum varhdr_parser_state {
     MQTT_PARSE_VARHDR_INITIAL = 0,
     MQTT_PARSE_VARHDR_OPTIONAL_REASON_CODE,
     MQTT_PARSE_VARHDR_PROPS,
-    MQTT_PARSE_REASONCODES
+    MQTT_PARSE_VARHDR_TOPICNAME,
+    MQTT_PARSE_VARHDR_PACKET_ID,
+    MQTT_PARSE_REASONCODES,
+    MQTT_PARSE_PAYLOAD
 };
 
 struct mqtt_vbi_parser_ctx {
@@ -121,6 +124,14 @@ struct mqtt_suback {
     uint8_t reason_codes_pending;
 };
 
+struct mqtt_publish {
+    uint16_t topic_len;
+    char *topic;
+    uint16_t packet_id;
+    size_t data_len;
+    char *data;
+};
+
 struct mqtt_ng_parser {
     rbuf_t received_data;
 
@@ -140,6 +151,7 @@ struct mqtt_ng_parser {
         struct mqtt_connack connack;
         struct mqtt_puback puback;
         struct mqtt_suback suback;
+        struct mqtt_publish publish;
     } mqtt_packet;
 };
 
@@ -1014,6 +1026,7 @@ int mqtt_ng_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subs, size
 #define MQTT_NG_CLIENT_PROTOCOL_ERROR         -1
 #define MQTT_NG_CLIENT_SERVER_RETURNED_ERROR  -2
 #define MQTT_NG_CLIENT_NOT_IMPL_YET           -3
+#define MQTT_NG_CLIENT_OOM                    -4
 
 #define BUF_READ_CHECK_AT_LEAST(buf, x)                 \
     if (rbuf_bytes_available(buf) < (x)) \
@@ -1169,6 +1182,73 @@ static int parse_suback_varhdr(struct mqtt_ng_client *client)
     return MQTT_NG_CLIENT_OK_CALL_AGAIN;
 }
 
+#define publish_get_qos(parser) ((parser->mqtt_control_packet_type >> 1) & 0x03)
+static int parse_publish_varhdr(struct mqtt_ng_client *client)
+{
+    struct mqtt_ng_parser *parser = &client->parser;
+    struct mqtt_publish *publish = &client->parser.mqtt_packet.publish;
+    switch (parser->varhdr_state) {
+        case MQTT_PARSE_VARHDR_INITIAL:
+            BUF_READ_CHECK_AT_LEAST(parser->received_data, 2);
+            rbuf_pop(parser->received_data, (char*)&publish->topic_len, 2);
+            publish->topic_len = be16toh(publish->topic_len);
+            publish->topic = calloc(1, publish->topic_len + 1 /* add 0x00 */);
+            if (publish->topic == NULL)
+                return MQTT_NG_CLIENT_OOM;
+            parser->varhdr_state = MQTT_PARSE_VARHDR_PACKET_ID;
+            parser->mqtt_parsed_len = 2;
+            /* FALLTHROUGH */
+        case MQTT_PARSE_VARHDR_TOPICNAME:
+            // TODO check empty topic can be valid? In which case we have to skip this step
+            BUF_READ_CHECK_AT_LEAST(parser->received_data, publish->topic_len);
+            rbuf_pop(parser->received_data, publish->topic, publish->topic_len);
+            parser->mqtt_parsed_len += publish->topic_len;
+            printf(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> %d\n", (int)publish_get_qos(parser) );
+            mqtt_properties_parser_ctx_reset(&parser->properties_parser);
+            if (!publish_get_qos(parser)) {
+                parser->varhdr_state = MQTT_PARSE_VARHDR_PROPS;
+                break;
+            }
+            parser->varhdr_state = MQTT_PARSE_VARHDR_PACKET_ID;
+            /* FALLTHROUGH */
+        case MQTT_PARSE_VARHDR_PACKET_ID:
+            BUF_READ_CHECK_AT_LEAST(parser->received_data, 2);
+            rbuf_pop(parser->received_data, (char*)&publish->packet_id, 2);
+            publish->packet_id = be16toh(publish->packet_id);
+            parser->varhdr_state = MQTT_PARSE_VARHDR_PROPS;
+            parser->mqtt_parsed_len += 2;
+            /* FALLTHROUGH */
+        case MQTT_PARSE_VARHDR_PROPS:
+            int rc = parse_properties_array(&parser->properties_parser, parser->received_data, client->log);
+            if (rc != MQTT_NG_CLIENT_PARSE_DONE) 
+                return rc;
+            parser->mqtt_parsed_len += parser->properties_parser.bytes_consumed;
+            parser->varhdr_state = MQTT_PARSE_PAYLOAD;
+            /* FALLTROUGH */
+        case MQTT_PARSE_PAYLOAD:
+            if (parser->mqtt_fixed_hdr_remaining_length < parser->mqtt_parsed_len) {
+                ERROR("Error parsing PUBLISH message");
+                return MQTT_NG_CLIENT_PROTOCOL_ERROR;
+            }
+            publish->data_len = parser->mqtt_fixed_hdr_remaining_length - parser->mqtt_parsed_len;
+            if (!publish->data_len) {
+                publish->data = NULL;
+                return MQTT_NG_CLIENT_PARSE_DONE; // 0 Length payload is OK
+            }
+            BUF_READ_CHECK_AT_LEAST(parser->received_data, publish->data_len);
+
+            publish->data = malloc(publish->data_len);
+            if (publish->data == NULL)
+                return MQTT_NG_CLIENT_OOM;
+
+            rbuf_pop(parser->received_data, publish->data, publish->data_len);
+            parser->mqtt_parsed_len += publish->data_len;
+
+            return MQTT_NG_CLIENT_PARSE_DONE;
+    }
+    return MQTT_NG_CLIENT_OK_CALL_AGAIN;
+}
+
 static inline uint8_t get_control_packet_type(struct mqtt_ng_parser *parser)
 {
     return parser->mqtt_control_packet_type >> 4;
@@ -1214,6 +1294,13 @@ static int parse_data(struct mqtt_ng_client *client)
                     return rc;
                 case MQTT_CPT_SUBACK:
                     rc = parse_suback_varhdr(client);
+                    if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
+                        parser->state = MQTT_PARSE_MQTT_PACKET_DONE;
+                        break;
+                    }
+                    return rc;
+                case MQTT_CPT_PUBLISH:
+                    rc = parse_publish_varhdr(client);
                     if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
                         parser->state = MQTT_PARSE_MQTT_PACKET_DONE;
                         break;
