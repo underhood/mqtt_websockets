@@ -1366,6 +1366,9 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
     int rc;
     while( (rc = parse_data(client)) == MQTT_NG_CLIENT_OK_CALL_AGAIN );
     if ( rc == MQTT_NG_CLIENT_MQTT_PACKET_DONE ) {
+#ifdef MQTT_DEBUG_VERBOSE
+        DEBUG("MQTT Packet Parsed Successfully!");
+#endif
         switch (get_control_packet_type(&client->parser)) {
             case MQTT_CPT_CONNACK:
                 if (client->client_state != CONNECTING) {
@@ -1383,13 +1386,23 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
                 client->client_state = ERROR;
                 return MQTT_NG_CLIENT_SERVER_RETURNED_ERROR;
             case MQTT_CPT_PUBACK:
-                ERROR (">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>PUBACK %d", (int)client->parser.mqtt_packet.puback.packet_id);
+#ifdef MQTT_DEBUG_VERBOSE
+                DEBUG("Received PUBACK %" PRIu16, client->parser.mqtt_packet.puback.packet_id);
+#endif
+                if (mark_packet_acked(client, client->parser.mqtt_packet.puback.packet_id))
+                    return MQTT_NG_CLIENT_PROTOCOL_ERROR;
                 break;
             case MQTT_CPT_SUBACK:
-                ERROR (">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>SUBACK %d", (int)client->parser.mqtt_packet.suback.packet_id);
+#ifdef MQTT_DEBUG_VERBOSE
+                DEBUG("Received SUBACK %" PRIu16, client->parser.mqtt_packet.suback.packet_id);
+#endif
+                if (mark_packet_acked(client, client->parser.mqtt_packet.suback.packet_id))
+                    return MQTT_NG_CLIENT_PROTOCOL_ERROR;
                 break;
             case MQTT_CPT_PUBLISH:
-                ERROR (">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>PUBLISH");
+#ifdef MQTT_DEBUG_VERBOSE
+                DEBUG("Recevied PUBLISH");
+#endif
                 struct mqtt_publish *pub = &client->parser.mqtt_packet.publish;
                 if (pub->qos > 1) {
                     free(pub->topic);
