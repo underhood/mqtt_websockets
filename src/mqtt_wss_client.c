@@ -852,8 +852,13 @@ void mqtt_wss_disconnect(mqtt_wss_client client, int timeout_ms)
                   mqtt_wss_error_tos(ret));
 
     // schedule and send MQTT disconnect
-    mqtt_disconnect(client->mqtt.mqtt_c->mqtt_client);
-    mqtt_sync(client->mqtt.mqtt_c->mqtt_client);
+    if (client->internal_mqtt) {
+        mqtt_ng_disconnect(client->mqtt.mqtt_ctx, 0);
+        mqtt_ng_sync(client->mqtt.mqtt_ctx);
+    } else {
+        mqtt_disconnect(client->mqtt.mqtt_c->mqtt_client);
+        mqtt_sync(client->mqtt.mqtt_c->mqtt_client);
+    }
     ret = mqtt_wss_service_all(client, timeout_ms / 4);
     if(ret)
         mws_error(client->log,

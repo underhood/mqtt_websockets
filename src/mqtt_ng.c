@@ -158,12 +158,14 @@ struct mqtt_ng_parser {
 
 enum mqtt_ng_message_state {
     PENDING = 0,
-    AWAIT_REPLY
+    AWAIT_REPLY, // PUBACK, SUBACK etc.
+    DONE
 };
 
 struct mqtt_ng_message_info {
     struct buffer_fragment *data_head;
     enum mqtt_ng_message_state state;
+    uint16_t packet_id;
 };
 
 struct tx_queue {
@@ -361,7 +363,7 @@ struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings)
     return client;
 }
 
-int tx_queue_add_message_tail(struct tx_queue *tx_queue, struct buffer_fragment *frag)
+int tx_queue_add_message_tail(struct tx_queue *tx_queue, struct buffer_fragment *frag, uint16_t packet_id)
 {
     if (tx_queue->used >= tx_queue->size)
         return 1;
@@ -372,6 +374,7 @@ int tx_queue_add_message_tail(struct tx_queue *tx_queue, struct buffer_fragment 
 
     tx_queue->queue[idx].data_head = frag;
     tx_queue->queue[idx].state = PENDING;
+    tx_queue->queue[idx].packet_id = packet_id;
     tx_queue->tail = &tx_queue->queue[idx];
 
     tx_queue->used++;
@@ -943,7 +946,7 @@ int mqtt_ng_publish(struct mqtt_ng_client *client,
     if (!generated)
         return 1;
 
-    if (tx_queue_add_message_tail(&client->tx_queue, generated))
+    if (tx_queue_add_message_tail(&client->tx_queue, generated, *packet_id))
         return 1;
 
     return 0;
@@ -960,7 +963,7 @@ static inline size_t mqtt_ng_subscribe_size(struct mqtt_sub *subs, size_t sub_co
     return len;
 }
 
-mqtt_msg_data mqtt_ng_generate_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subs, size_t sub_count)
+mqtt_msg_data mqtt_ng_generate_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subs, size_t sub_count, uint16_t *packet_id)
 {
     // >> START THE RODEO <<
     buffer_transaction_start(client);
@@ -985,8 +988,8 @@ mqtt_msg_data mqtt_ng_generate_subscribe(struct mqtt_ng_client *client, struct m
 
     // MQTT Variable Header
     // [MQTT-3.8.2] PacketID
-    uint16_t packet_id = get_unused_packet_id();
-    PACK_2B_INT(packet_id, frag);
+    *packet_id = get_unused_packet_id();
+    PACK_2B_INT(*packet_id, frag);
 
     // [MQTT-3.8.2.1.1] Property Length // TODO for now fixed 0
     *WRITE_POS(frag) = 0;
@@ -1012,12 +1015,64 @@ fail_rollback:
 
 int mqtt_ng_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subs, size_t sub_count)
 {
-    mqtt_msg_data generated = mqtt_ng_generate_subscribe(client, subs, sub_count);
+    uint16_t packet_id;
+    mqtt_msg_data generated = mqtt_ng_generate_subscribe(client, subs, sub_count, &packet_id);
 
     if (!generated)
         return 1;
 
-    if (tx_queue_add_message_tail(&client->tx_queue, generated))
+    if (tx_queue_add_message_tail(&client->tx_queue, generated, packet_id))
+        return 1;
+
+    return 0;
+}
+
+mqtt_msg_data mqtt_ng_generate_disconnect(struct mqtt_ng_client *client, uint8_t reason_code)
+{
+    // >> START THE RODEO <<
+    buffer_transaction_start(client);
+
+    // Calculate the resulting message size sans fixed MQTT header
+    size_t size = reason_code ? 1 : 0;
+
+    // Start generating the message
+    struct buffer_fragment *frag = NULL;
+    mqtt_msg_data ret = NULL;
+
+    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD, frag, goto fail_rollback);
+    ret = frag;
+
+    // MQTT Fixed Header
+    size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + (reason_code ? 1 : 0);
+    CHECK_BYTES_AVAILABLE(client, needed_bytes, goto fail_rollback);
+
+    *WRITE_POS(frag) = MQTT_CPT_DISCONNECT << 4;
+    DATA_ADVANCE(1, frag);
+    DATA_ADVANCE(uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
+
+    if (reason_code) {
+        // MQTT Variable Header
+        // [MQTT-3.14.2.1] PacketID
+        *WRITE_POS(frag) = reason_code;
+        DATA_ADVANCE(1, frag);
+    }
+
+    client->buf.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
+    buffer_transaction_commit(client);
+    return ret;
+fail_rollback:
+    buffer_transaction_rollback(client, ret);
+    return NULL;
+}
+
+int mqtt_ng_disconnect(struct mqtt_ng_client *client, uint8_t reason_code)
+{
+    mqtt_msg_data generated = mqtt_ng_generate_disconnect(client, reason_code);
+
+    if (!generated)
+        return 1;
+
+    if (tx_queue_add_message_tail(&client->tx_queue, generated, 0))
         return 1;
 
     return 0;
