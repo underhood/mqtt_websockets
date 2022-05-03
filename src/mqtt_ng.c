@@ -1361,6 +1361,34 @@ static void try_send_all(struct mqtt_ng_client *client) {
     } while(!send_all_message_fragments(client));
 }
 
+static inline void mark_message_for_gc(struct buffer_fragment *frag)
+{
+    while (frag) {
+        frag->flags |= BUFFER_FRAG_GARBAGE_COLLECT;
+        if (frag->flags & BUFFER_FRAG_MQTT_PACKET_TAIL)
+            return;
+        frag = frag->next;
+    }
+}
+
+static int mark_packet_acked(struct mqtt_ng_client *client, uint16_t packet_id)
+{
+    struct buffer_fragment *frag = client->buf.buffer_size ? client->buf.data : NULL;
+    while (frag) {
+        if ( (frag->flags & BUFFER_FRAG_MQTT_PACKET_HEAD) && frag->packet_id == packet_id) {
+            if (!frag->sent) {
+                ERROR("Received packet_id (%" PRIu16 ") belongs to MQTT packet which was not yet sent!", packet_id);
+                return 1;
+            }
+            mark_message_for_gc(frag);
+            return 0;
+        }
+        frag = frag->next;
+    }
+    ERROR("Received packet_id (%" PRIu16 ") is unknown!", packet_id);
+    return 1;
+}
+
 int handle_incoming_traffic(struct mqtt_ng_client *client)
 {
     int rc;
