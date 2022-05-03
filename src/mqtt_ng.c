@@ -985,6 +985,45 @@ int mqtt_ng_disconnect(struct mqtt_ng_client *client, uint8_t reason_code)
     return 0;
 }
 
+static int mqtt_generate_puback(struct mqtt_ng_client *client, uint16_t packet_id, uint8_t reason_code)
+{
+    // >> START THE RODEO <<
+    buffer_transaction_start(client);
+
+    // Calculate the resulting message size sans fixed MQTT header
+    size_t size = 2 /* Packet ID */ + (reason_code ? 1 : 0) /* reason code */;
+
+    // Start generating the message
+    struct buffer_fragment *frag = NULL;
+
+    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD, frag, goto fail_rollback);
+
+    // MQTT Fixed Header
+    size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + size;
+    CHECK_BYTES_AVAILABLE(client, needed_bytes, goto fail_rollback);
+
+    *WRITE_POS(frag) = MQTT_CPT_PUBACK << 4;
+    DATA_ADVANCE(1, frag);
+    DATA_ADVANCE(uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
+
+    // MQTT Variable Header
+    PACK_2B_INT(packet_id, frag);
+
+    if (reason_code) {
+        // MQTT Variable Header
+        // [MQTT-3.14.2.1] PacketID
+        *WRITE_POS(frag) = reason_code;
+        DATA_ADVANCE(1, frag);
+    }
+
+    client->buf.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
+    buffer_transaction_commit(client);
+    return 0;
+fail_rollback:
+    buffer_transaction_rollback(client, frag);
+    return 1;
+}
+
 #define MQTT_NG_CLIENT_NEED_MORE_BYTES         0x10
 #define MQTT_NG_CLIENT_MQTT_PACKET_DONE        0x11
 #define MQTT_NG_CLIENT_PARSE_DONE              0x12
