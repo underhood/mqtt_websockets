@@ -42,6 +42,8 @@ struct buffer_fragment {
     void (*free_fnc)(void *ptr);
     char *data;
 
+    uint16_t packet_id;
+
     // next is not NULL only if there is
     // another fragment for the same MQTT message
     // it doesn't point to next fragment in the buffer
@@ -156,25 +158,6 @@ struct mqtt_ng_parser {
     } mqtt_packet;
 };
 
-enum mqtt_ng_message_state {
-    PENDING = 0,
-    AWAIT_REPLY, // PUBACK, SUBACK etc.
-    DONE
-};
-
-struct mqtt_ng_message_info {
-    struct buffer_fragment *data_head;
-    enum mqtt_ng_message_state state;
-    uint16_t packet_id;
-};
-
-struct tx_queue {
-    struct mqtt_ng_message_info *queue;
-    struct mqtt_ng_message_info *head;
-    struct mqtt_ng_message_info *tail;
-    size_t size;
-    size_t used;
-};
 
 struct mqtt_ng_client {
     struct header_buffer buf;
@@ -194,11 +177,9 @@ struct mqtt_ng_client {
     void *user_ctx;
 
     struct buffer_fragment *sending_frag;
-    struct mqtt_ng_message_info *sending_msg;
+    struct buffer_fragment *sending_msg;
 
     struct mqtt_ng_parser parser;
-
-    struct tx_queue tx_queue;
 
     void (*connack_callback)(void* user_ctx, int connack_reply);
     void (*msg_callback)(const char *topic, const void *msg, size_t msglen, int qos);
@@ -355,74 +336,7 @@ struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings)
     client->connack_callback = settings->connack_callback;
     client->msg_callback = settings->msg_callback;
 
-    size_t queue_size = 100; /* TODO MaxInflight * 4 (this is very small struct) */
-    client->tx_queue.queue = calloc( queue_size, sizeof(struct mqtt_ng_message_info));
-    client->tx_queue.size = queue_size;
-    client->tx_queue.head = client->tx_queue.queue;
-
     return client;
-}
-
-int tx_queue_add_message_tail(struct tx_queue *tx_queue, struct buffer_fragment *frag, uint16_t packet_id)
-{
-    if (tx_queue->used >= tx_queue->size)
-        return 1;
-
-    size_t idx = (tx_queue->head - tx_queue->queue) + tx_queue->used;
-    if (idx >= tx_queue->size)
-        idx -= tx_queue->size;
-
-    tx_queue->queue[idx].data_head = frag;
-    tx_queue->queue[idx].state = PENDING;
-    tx_queue->queue[idx].packet_id = packet_id;
-    tx_queue->tail = &tx_queue->queue[idx];
-
-    tx_queue->used++;
-
-    return 0;
-}
-
-static inline struct mqtt_ng_message_info *tx_queue_at_idx(struct tx_queue *tx_queue, size_t idx)
-{
-    if (idx >= tx_queue->used)
-        return NULL;
-
-    idx = (tx_queue->head - tx_queue->queue) + idx;
-    if (idx >= tx_queue->size)
-        idx -= tx_queue->size;
-
-    tx_queue->tail = &tx_queue->queue[idx];
-    return tx_queue->tail;
-}
-
-// return next message relative to ptr or null if it was last one
-// if ptr null return first message if any
-static inline struct mqtt_ng_message_info *tx_queue_next(struct tx_queue *tx_queue, struct mqtt_ng_message_info *ptr)
-{
-    if (!tx_queue->used)
-        return NULL;
-
-    if (ptr == NULL)
-        return tx_queue->head;
-
-    if (tx_queue->tail == ptr)
-        return NULL;
-
-    ptr++;
-    if ( ptr >= &tx_queue->queue[tx_queue->size] )
-        return tx_queue->queue;
-    
-    return ptr;
-}
-
-struct mqtt_ng_message_info *tx_queue_get_next_pending_msg(struct tx_queue *tx_queue)
-{
-    struct mqtt_ng_message_info *msg = NULL;
-    while ( (msg = tx_queue_next(tx_queue, msg)) != NULL ) {
-        if (msg->state == PENDING)
-            return msg;
-    }
-    return NULL;
 }
 
 // this helps with switch statements
@@ -908,8 +822,9 @@ mqtt_msg_data mqtt_ng_generate_publish(struct mqtt_ng_client *client,
     BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
 
     // [MQTT-3.3.2.2]
-    *packet_id = get_unused_packet_id();
-    PACK_2B_INT(*packet_id, frag);
+    ret->packet_id = get_unused_packet_id();
+    *packet_id = ret->packet_id;
+    PACK_2B_INT(ret->packet_id, frag);
 
     // [MQTT-3.3.2.3.1] TODO Property Length for now fixed 0
     *WRITE_POS(frag) = 0;
@@ -946,9 +861,6 @@ int mqtt_ng_publish(struct mqtt_ng_client *client,
     if (!generated)
         return 1;
 
-    if (tx_queue_add_message_tail(&client->tx_queue, generated, *packet_id))
-        return 1;
-
     return 0;
 }
 
@@ -963,7 +875,7 @@ static inline size_t mqtt_ng_subscribe_size(struct mqtt_sub *subs, size_t sub_co
     return len;
 }
 
-mqtt_msg_data mqtt_ng_generate_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subs, size_t sub_count, uint16_t *packet_id)
+mqtt_msg_data mqtt_ng_generate_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subs, size_t sub_count)
 {
     // >> START THE RODEO <<
     buffer_transaction_start(client);
@@ -988,8 +900,8 @@ mqtt_msg_data mqtt_ng_generate_subscribe(struct mqtt_ng_client *client, struct m
 
     // MQTT Variable Header
     // [MQTT-3.8.2] PacketID
-    *packet_id = get_unused_packet_id();
-    PACK_2B_INT(*packet_id, frag);
+    ret->packet_id = get_unused_packet_id();
+    PACK_2B_INT(ret->packet_id, frag);
 
     // [MQTT-3.8.2.1.1] Property Length // TODO for now fixed 0
     *WRITE_POS(frag) = 0;
@@ -1015,13 +927,9 @@ fail_rollback:
 
 int mqtt_ng_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subs, size_t sub_count)
 {
-    uint16_t packet_id;
-    mqtt_msg_data generated = mqtt_ng_generate_subscribe(client, subs, sub_count, &packet_id);
+    mqtt_msg_data generated = mqtt_ng_generate_subscribe(client, subs, sub_count);
 
     if (!generated)
-        return 1;
-
-    if (tx_queue_add_message_tail(&client->tx_queue, generated, packet_id))
         return 1;
 
     return 0;
@@ -1070,9 +978,6 @@ int mqtt_ng_disconnect(struct mqtt_ng_client *client, uint8_t reason_code)
     mqtt_msg_data generated = mqtt_ng_generate_disconnect(client, reason_code);
 
     if (!generated)
-        return 1;
-
-    if (tx_queue_add_message_tail(&client->tx_queue, generated, 0))
         return 1;
 
     return 0;
@@ -1398,9 +1303,15 @@ static int mqtt_ng_next_to_send(struct mqtt_ng_client *client) {
     if (client->client_state != CONNECTED)
         return -1;
 
-    client->sending_msg = tx_queue_get_next_pending_msg(&client->tx_queue);
-    client->sending_frag = client->sending_msg == NULL ? NULL : client->sending_msg->data_head;
-    return client->sending_frag == NULL ? 1 : 0;
+    struct buffer_fragment *frag = client->buf.buffer_size ? client->buf.data : NULL;
+    while (frag) {
+        if ( (frag->flags & BUFFER_FRAG_MQTT_PACKET_HEAD) && !frag->sent ) {
+            client->sending_frag = client->sending_msg = frag;
+            return 0;
+        }
+        frag = frag->next;
+    }
+    return 1;
 }
 
 // send current fragment
@@ -1440,8 +1351,6 @@ static int send_fragment(struct mqtt_ng_client *client) {
 static int send_all_message_fragments(struct mqtt_ng_client *client) {
     int rc;
     while ( !(rc = send_fragment(client)) );
-    if (rc == 1 && client->sending_msg)
-        client->sending_msg->state = AWAIT_REPLY;
     return rc;
 }
 
