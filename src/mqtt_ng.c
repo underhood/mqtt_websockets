@@ -1412,7 +1412,9 @@ int mqtt_ng_sync(struct mqtt_ng_client *client)
     if (client->client_state == RAW)
         return 0;
 
+    LOCK_HDR_BUFFER(client);
     try_send_all(client);
+    UNLOCK_HDR_BUFFER(client);
 
     handle_incoming_traffic(client);
 
