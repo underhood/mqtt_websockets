@@ -181,6 +181,7 @@ struct mqtt_ng_client {
 
     struct mqtt_ng_parser parser;
 
+    void (*puback_callback)(uint16_t packet_id);
     void (*connack_callback)(void* user_ctx, int connack_reply);
     void (*msg_callback)(const char *topic, const void *msg, size_t msglen, int qos);
 };
@@ -333,6 +334,7 @@ struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings)
 
     client->log = settings->log;
 
+    client->puback_callback = settings->puback_callback;
     client->connack_callback = settings->connack_callback;
     client->msg_callback = settings->msg_callback;
 
@@ -1419,6 +1421,8 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
 #endif
                 if (mark_packet_acked(client, client->parser.mqtt_packet.puback.packet_id))
                     return MQTT_NG_CLIENT_PROTOCOL_ERROR;
+                if (client->puback_callback)
+                    client->puback_callback(client->parser.mqtt_packet.puback.packet_id);
                 break;
             case MQTT_CPT_SUBACK:
 #ifdef MQTT_DEBUG_VERBOSE

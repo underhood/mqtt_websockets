@@ -68,6 +68,7 @@ struct mqtt_ng_init {
     mqtt_ng_send_fnc_t data_out_fnc;
     void *user_ctx;
 
+    void (*puback_callback)(uint16_t packet_id);
     void (*connack_callback)(void* user_ctx, int connack_reply);
     void (*msg_callback)(const char *topic, const void *msg, size_t msglen, int qos);
 };

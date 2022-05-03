@@ -313,6 +313,7 @@ mqtt_wss_client mqtt_wss_new(const char *log_prefix,
             .data_out_fnc = &mqtt_ng_send,
             .user_ctx = client,
             .connack_callback = &mws_connack_callback_ng,
+            .puback_callback = puback_callback,
             .msg_callback = msg_callback
         };
         if ( (client->mqtt.mqtt_ctx = mqtt_ng_init(&settings)) == NULL ) {
