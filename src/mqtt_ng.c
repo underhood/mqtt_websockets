@@ -1027,6 +1027,7 @@ fail_rollback:
 #define MQTT_NG_CLIENT_NEED_MORE_BYTES         0x10
 #define MQTT_NG_CLIENT_MQTT_PACKET_DONE        0x11
 #define MQTT_NG_CLIENT_PARSE_DONE              0x12
+#define MQTT_NG_CLIENT_WANT_WRITE              0x13
 #define MQTT_NG_CLIENT_OK_CALL_AGAIN           0
 #define MQTT_NG_CLIENT_PROTOCOL_ERROR         -1
 #define MQTT_NG_CLIENT_SERVER_RETURNED_ERROR  -2
@@ -1480,11 +1481,15 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
                     free(pub->data);
                     return MQTT_NG_CLIENT_NOT_IMPL_YET;
                 }
+                if (mqtt_generate_puback(client, pub->packet_id, 0)) {
+                    ERROR("Error generating PUBACK reply for PUBLISH");
+                    break;
+                }
                 if (client->msg_callback)
                     client->msg_callback(pub->topic, pub->data, pub->data_len, pub->qos);
                 free(pub->topic);
                 free(pub->data);
-                break;
+                return MQTT_NG_CLIENT_WANT_WRITE;
         }
     }
 
@@ -1500,7 +1505,16 @@ int mqtt_ng_sync(struct mqtt_ng_client *client)
     try_send_all(client);
     UNLOCK_HDR_BUFFER(client);
 
-    handle_incoming_traffic(client);
+    int ac = handle_incoming_traffic(client);
+    // TODO this is quick and dirty
+    if (ac != MQTT_NG_CLIENT_NEED_MORE_BYTES) {
+        int ac = handle_incoming_traffic(client);
+    }
+    if (ac == MQTT_NG_CLIENT_WANT_WRITE) {
+        LOCK_HDR_BUFFER(client);
+        try_send_all(client);
+        UNLOCK_HDR_BUFFER(client);
+    }
 
     return 0;
 }
