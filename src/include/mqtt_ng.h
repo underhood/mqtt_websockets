@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <time.h>
 
 #include "ringbuffer.h"
 #include "common_public.h"
@@ -60,6 +61,8 @@ struct mqtt_sub {
 
 int mqtt_ng_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subscriptions, size_t subscription_count);
 
+int mqtt_ng_ping(struct mqtt_ng_client *client);
+
 typedef ssize_t (*mqtt_ng_send_fnc_t)(void *user_ctx, const void* buf, size_t len);
 
 struct mqtt_ng_init {
@@ -78,3 +81,5 @@ struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings);
 int mqtt_ng_disconnect(struct mqtt_ng_client *client, uint8_t reason_code);
 
 int mqtt_ng_sync(struct mqtt_ng_client *client);
+
+time_t mqtt_ng_last_send_time(struct mqtt_ng_client *client);

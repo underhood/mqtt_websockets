@@ -176,6 +176,9 @@ struct mqtt_ng_client {
     mqtt_ng_send_fnc_t send_fnc_ptr;
     void *user_ctx;
 
+    // time when last fragment of MQTT message was sent
+    time_t time_of_last_send;
+
     struct buffer_fragment *sending_frag;
     struct buffer_fragment *sending_msg;
 
@@ -1048,6 +1051,11 @@ fail_rollback:
     return 1;
 }
 
+int mqtt_ng_ping(struct mqtt_ng_client *client)
+{
+    return mqtt_generate_pingreq(client);
+}
+
 #define MQTT_NG_CLIENT_NEED_MORE_BYTES         0x10
 #define MQTT_NG_CLIENT_MQTT_PACKET_DONE        0x11
 #define MQTT_NG_CLIENT_PARSE_DONE              0x12
@@ -1411,6 +1419,7 @@ static int send_fragment(struct mqtt_ng_client *client) {
         return -1;
 
     if (frag->flags & BUFFER_FRAG_MQTT_PACKET_TAIL) {
+        client->time_of_last_send = time(NULL);
         client->sending_frag = NULL;
         return 1;
     }
@@ -1553,4 +1562,9 @@ int mqtt_ng_sync(struct mqtt_ng_client *client)
     }
 
     return 0;
+}
+
+time_t mqtt_ng_last_send_time(struct mqtt_ng_client *client)
+{
+    return client->time_of_last_send;
 }
