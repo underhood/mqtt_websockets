@@ -1024,6 +1024,30 @@ fail_rollback:
     return 1;
 }
 
+static int mqtt_generate_pingreq(struct mqtt_ng_client *client)
+{
+    // >> START THE RODEO <<
+    buffer_transaction_start(client);
+
+    // Start generating the message
+    struct buffer_fragment *frag = NULL;
+
+    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD | BUFFER_FRAG_MQTT_PACKET_TAIL, frag, goto fail_rollback);
+
+    CHECK_BYTES_AVAILABLE(client, 2, goto fail_rollback);
+
+    *WRITE_POS(frag) = MQTT_CPT_PINGREQ << 4;
+    DATA_ADVANCE(1, frag);
+    *WRITE_POS(frag) = 0;
+    DATA_ADVANCE(1, frag);
+
+    buffer_transaction_commit(client);
+    return 0;
+fail_rollback:
+    buffer_transaction_rollback(client, frag);
+    return 1;
+}
+
 #define MQTT_NG_CLIENT_NEED_MORE_BYTES         0x10
 #define MQTT_NG_CLIENT_MQTT_PACKET_DONE        0x11
 #define MQTT_NG_CLIENT_PARSE_DONE              0x12
@@ -1316,6 +1340,13 @@ static int parse_data(struct mqtt_ng_client *client)
                         break;
                     }
                     return rc;
+                case MQTT_CPT_PINGRESP:
+                    if (parser->mqtt_fixed_hdr_remaining_length) {
+                        ERROR ("PINGRESP has to be 0 Remaining Length."); // [MQTT-3.13.1]
+                        return MQTT_NG_CLIENT_PROTOCOL_ERROR;
+                    }
+                    parser->state = MQTT_PARSE_MQTT_PACKET_DONE;
+                    break;
                 default:
                     ERROR("Parsing Control Packet Type %" PRIu8 " not implemented yet.", get_control_packet_type(parser));
                     rbuf_bump_tail(parser->received_data, parser->mqtt_fixed_hdr_remaining_length);
@@ -1463,6 +1494,11 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
                     return MQTT_NG_CLIENT_PROTOCOL_ERROR;
                 if (client->puback_callback)
                     client->puback_callback(client->parser.mqtt_packet.puback.packet_id);
+                break;
+            case MQTT_CPT_PINGRESP:
+#ifdef MQTT_DEBUG_VERBOSE
+                DEBUG("Received PINGRESP");
+#endif
                 break;
             case MQTT_CPT_SUBACK:
 #ifdef MQTT_DEBUG_VERBOSE
