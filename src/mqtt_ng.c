@@ -365,6 +365,7 @@ static inline enum memory_mode ptr2memory_mode(void * ptr) {
 
 #define BUFFER_BYTES_USED(buf) ((size_t)((buf)->tail - (buf)->data))
 #define BUFFER_BYTES_AVAILABLE(buf) (HEADER_BUFFER_SIZE - BUFFER_BYTES_USED(buf))
+#define BUFFER_FIRST_FRAG(buf) ((buf)->tail_frag ? (buf)->data : NULL)
 
 static struct buffer_fragment *buffer_new_frag(struct mqtt_ng_client *client, buffer_frag_flag_t flags)
 {
@@ -1390,7 +1391,7 @@ static int mqtt_ng_next_to_send(struct mqtt_ng_client *client) {
     if (client->client_state != CONNECTED)
         return -1;
 
-    struct buffer_fragment *frag = client->buf.buffer_size ? client->buf.data : NULL;
+    struct buffer_fragment *frag = BUFFER_FIRST_FRAG(&client->buf);
     while (frag) {
         if ( (frag->flags & BUFFER_FRAG_MQTT_PACKET_HEAD) && !frag->sent ) {
             client->sending_frag = client->sending_msg = frag;
@@ -1461,7 +1462,7 @@ static inline void mark_message_for_gc(struct buffer_fragment *frag)
 
 static int mark_packet_acked(struct mqtt_ng_client *client, uint16_t packet_id)
 {
-    struct buffer_fragment *frag = client->buf.buffer_size ? client->buf.data : NULL;
+    struct buffer_fragment *frag = BUFFER_FIRST_FRAG(&client->buf);
     while (frag) {
         if ( (frag->flags & BUFFER_FRAG_MQTT_PACKET_HEAD) && frag->packet_id == packet_id) {
             if (!frag->sent) {
