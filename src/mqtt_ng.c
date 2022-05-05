@@ -568,10 +568,7 @@ void buffer_transaction_rollback(struct mqtt_ng_client *client, struct buffer_fr
 #define BUFFER_TRANSACTION_NEW_FRAG(client, flags, frag, on_fail) \
     { if(frag==NULL) { \
         frag = buffer_new_frag(client, (flags)); } \
-      if(frag==NULL) { \
-        ERROR("Failed to create new fragment. Buffer full. %s, %d", __FUNCTION__, __LINE__); \
-        on_fail; \
-      }}
+      if(frag==NULL) { on_fail; }}
 
 #define CHECK_BYTES_AVAILABLE(client, needed, fail) \
     { if (BUFFER_BYTES_AVAILABLE(&client->buf) < (size_t)needed) { \
