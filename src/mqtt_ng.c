@@ -658,6 +658,16 @@ void dump_buffer_fragment(struct buffer_fragment *frag)
     }
 }
 
+#define TRY_GENERATE_MESSAGE(generator_function, client, ...) \
+    int rc = generator_function(client, ##__VA_ARGS__); \
+    if (rc == MQTT_NG_MSGGEN_BUFFER_OOM) { \
+        buffer_garbage_collect(client); \
+        rc = generator_function(client, ##__VA_ARGS__); \
+        if (rc == MQTT_NG_MSGGEN_BUFFER_OOM) \
+            ERROR("%s failed to generate message due to insufficient buffer space (line %d)", __FUNCTION__, __LINE__); \
+    } \
+    return rc;
+
 mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
                                        struct mqtt_auth_properties *auth,
                                        struct mqtt_lwt_properties *lwt,
