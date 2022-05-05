@@ -1029,20 +1029,15 @@ int mqtt_ng_generate_disconnect(struct mqtt_ng_client *client, uint8_t reason_co
 
     client->buf.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
     buffer_transaction_commit(client);
-    return ret;
+    return MQTT_NG_MSGGEN_OK;
 fail_rollback:
     buffer_transaction_rollback(client, ret);
-    return NULL;
+    return MQTT_NG_MSGGEN_BUFFER_OOM;
 }
 
 int mqtt_ng_disconnect(struct mqtt_ng_client *client, uint8_t reason_code)
 {
-    mqtt_msg_data generated = mqtt_ng_generate_disconnect(client, reason_code);
-
-    if (!generated)
-        return 1;
-
-    return 0;
+    TRY_GENERATE_MESSAGE(mqtt_ng_generate_disconnect, client, reason_code);
 }
 
 static int mqtt_generate_puback(struct mqtt_ng_client *client, uint16_t packet_id, uint8_t reason_code)
@@ -1078,10 +1073,15 @@ static int mqtt_generate_puback(struct mqtt_ng_client *client, uint16_t packet_i
 
     client->buf.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
     buffer_transaction_commit(client);
-    return 0;
+    return MQTT_NG_MSGGEN_OK;
 fail_rollback:
     buffer_transaction_rollback(client, frag);
-    return 1;
+    return MQTT_NG_MSGGEN_BUFFER_OOM;
+}
+
+static int mqtt_ng_puback(struct mqtt_ng_client *client, uint16_t packet_id, uint8_t reason_code)
+{
+    TRY_GENERATE_MESSAGE(mqtt_generate_puback, client, packet_id, reason_code);
 }
 
 static int mqtt_generate_pingreq(struct mqtt_ng_client *client)
