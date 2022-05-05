@@ -1351,11 +1351,6 @@ static int parse_publish_varhdr(struct mqtt_ng_client *client)
     return MQTT_NG_CLIENT_OK_CALL_AGAIN;
 }
 
-static inline uint8_t get_control_packet_type(struct mqtt_ng_parser *parser)
-{
-    return parser->mqtt_control_packet_type >> 4;
-}
-
 // TODO move to separate file, dont send whole client pointer just to be able
 // to access LOG context send parser only which should include log
 static int parse_data(struct mqtt_ng_client *client)
