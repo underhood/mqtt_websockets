@@ -350,7 +350,9 @@ void mqtt_wss_set_max_buf_size(mqtt_wss_client client, size_t size)
 
 void mqtt_wss_destroy(mqtt_wss_client client)
 {
-    if (!client->internal_mqtt)
+    if (client->internal_mqtt)
+        mqtt_ng_destroy(client->mqtt.mqtt_ctx);
+    else
         mqtt_c_client_destroy(client->mqtt.mqtt_c);
 
     close(client->write_notif_pipe[PIPE_WRITE_END]);
