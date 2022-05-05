@@ -409,6 +409,54 @@ static void buffer_frag_free_data(struct buffer_fragment *frag)
     }
 }
 
+#define frag_is_marked_for_gc(frag) ((frag->flags & BUFFER_FRAG_GARBAGE_COLLECT) || ((frag->flags & BUFFER_FRAG_GARBAGE_COLLECT_ON_SEND) && frag->sent == frag->len))
+
+static void buffer_garbage_collect(struct mqtt_ng_client *client)
+{
+    LOCK_HDR_BUFFER(client);
+    size_t shift_by = 0;
+    struct buffer_fragment *frag = BUFFER_FIRST_FRAG(&client->buf);
+    while (frag) {
+        if (!frag_is_marked_for_gc(frag))
+            break;
+
+        buffer_frag_free_data(frag);
+
+        frag = frag->next;
+    }
+
+    if (!frag) {
+        client->buf.tail_frag = NULL;
+        client->buf.tail = client->buf.data;
+        UNLOCK_HDR_BUFFER(client);
+        return;
+    }
+
+#ifdef ADDITIONAL_CHECKS
+    if (!(frag->flags & BUFFER_FRAG_MQTT_PACKET_HEAD)) {
+        UNLOCK_HDR_BUFFER(client);
+        ERROR("Expected to find end of buffer (NULL) or next packet head!");
+        return;
+    }
+#endif
+
+    memmove(client->buf.data, frag, client->buf.tail - (char*)frag);
+    frag = client->buf.data;
+    do {
+        client->buf.tail = (char*)frag + sizeof(struct buffer_fragment);
+        client->buf.tail_frag = frag;
+        if (!(frag->flags & BUFFER_FRAG_DATA_EXTERNAL)) {
+            client->buf.tail_frag->data = client->buf.tail;
+            client->buf.tail += frag->len;
+        }
+        if (frag->next != NULL)
+            frag->next = client->buf.tail;
+        frag = frag->next;
+    } while(frag);
+
+    UNLOCK_HDR_BUFFER(client);
+}
+
 int frag_set_external_data(mqtt_wss_log_ctx_t log, struct buffer_fragment *frag, void *data, size_t data_len, free_fnc_t data_free_fnc)
 {
     if (frag->len) {
