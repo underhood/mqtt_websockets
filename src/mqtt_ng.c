@@ -1102,15 +1102,15 @@ static int mqtt_generate_pingreq(struct mqtt_ng_client *client)
     DATA_ADVANCE(1, frag);
 
     buffer_transaction_commit(client);
-    return 0;
+    return MQTT_NG_MSGGEN_OK;
 fail_rollback:
     buffer_transaction_rollback(client, frag);
-    return 1;
+    return MQTT_NG_MSGGEN_BUFFER_OOM;
 }
 
 int mqtt_ng_ping(struct mqtt_ng_client *client)
 {
-    return mqtt_generate_pingreq(client);
+    TRY_GENERATE_MESSAGE(mqtt_generate_pingreq, client);
 }
 
 #define MQTT_NG_CLIENT_NEED_MORE_BYTES         0x10
