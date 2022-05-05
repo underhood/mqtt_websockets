@@ -370,7 +370,7 @@ static inline uint8_t get_control_packet_type(uint8_t first_hdr_byte)
 
 #define BUFFER_BYTES_USED(buf) ((size_t)((buf)->tail - (buf)->data))
 #define BUFFER_BYTES_AVAILABLE(buf) (HEADER_BUFFER_SIZE - BUFFER_BYTES_USED(buf))
-#define BUFFER_FIRST_FRAG(buf) ((buf)->tail_frag ? (buf)->data : NULL)
+#define BUFFER_FIRST_FRAG(buf) ((struct buffer_fragment *)((buf)->tail_frag ? (buf)->data : NULL))
 
 static struct buffer_fragment *buffer_new_frag(struct mqtt_ng_client *client, buffer_frag_flag_t flags)
 {
