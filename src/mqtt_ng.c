@@ -363,6 +363,11 @@ static inline enum memory_mode ptr2memory_mode(void * ptr) {
     return EXTERNAL_FREE_AFTER_USE;
 }
 
+static inline uint8_t get_control_packet_type(uint8_t first_hdr_byte)
+{
+    return first_hdr_byte >> 4;
+}
+
 #define BUFFER_BYTES_USED(buf) ((size_t)((buf)->tail - (buf)->data))
 #define BUFFER_BYTES_AVAILABLE(buf) (HEADER_BUFFER_SIZE - BUFFER_BYTES_USED(buf))
 #define BUFFER_FIRST_FRAG(buf) ((buf)->tail_frag ? (buf)->data : NULL)
@@ -1326,7 +1331,7 @@ static int parse_data(struct mqtt_ng_client *client)
             }
             return rc;
         case MQTT_PARSE_VARIABLE_HEADER:
-            switch (get_control_packet_type(parser)) {
+            switch (get_control_packet_type(parser->mqtt_control_packet_type)) {
                 case MQTT_CPT_CONNACK:
                     rc = parse_connack_varhdr(client);
                     if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
@@ -1363,7 +1368,7 @@ static int parse_data(struct mqtt_ng_client *client)
                     parser->state = MQTT_PARSE_MQTT_PACKET_DONE;
                     break;
                 default:
-                    ERROR("Parsing Control Packet Type %" PRIu8 " not implemented yet.", get_control_packet_type(parser));
+                    ERROR("Parsing Control Packet Type %" PRIu8 " not implemented yet.", get_control_packet_type(parser->mqtt_control_packet_type));
                     rbuf_bump_tail(parser->received_data, parser->mqtt_fixed_hdr_remaining_length);
                     parser->state = MQTT_PARSE_MQTT_PACKET_DONE;
                     return MQTT_NG_CLIENT_NOT_IMPL_YET;
@@ -1486,7 +1491,7 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
 #ifdef MQTT_DEBUG_VERBOSE
         DEBUG("MQTT Packet Parsed Successfully!");
 #endif
-        switch (get_control_packet_type(&client->parser)) {
+        switch (get_control_packet_type(client->parser.mqtt_control_packet_type)) {
             case MQTT_CPT_CONNACK:
 #ifdef MQTT_DEBUG_VERBOSE
                 DEBUG("Received CONNACK");
