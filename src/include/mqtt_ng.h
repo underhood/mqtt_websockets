@@ -80,6 +80,8 @@ struct mqtt_ng_init {
 
 struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings);
 
+void mqtt_ng_destroy(struct mqtt_ng_client *client);
+
 int mqtt_ng_disconnect(struct mqtt_ng_client *client, uint8_t reason_code);
 
 int mqtt_ng_sync(struct mqtt_ng_client *client);

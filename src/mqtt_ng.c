@@ -460,6 +460,23 @@ static void buffer_garbage_collect(struct mqtt_ng_client *client)
     UNLOCK_HDR_BUFFER(client);
 }
 
+static void buffer_purge(struct header_buffer *buf) {
+    struct buffer_fragment *frag = BUFFER_FIRST_FRAG(buf);
+    while (frag) {
+        buffer_frag_free_data(frag);
+        frag = frag->next;
+    }
+    buf->tail = buf->data;
+    buf->tail_frag = NULL;
+}
+
+void mqtt_ng_destroy(struct mqtt_ng_client *client)
+{
+    buffer_purge(&client->buf);
+    pthread_mutex_destroy(&client->buf_mutex);
+    free(client);
+}
+
 int frag_set_external_data(mqtt_wss_log_ctx_t log, struct buffer_fragment *frag, void *data, size_t data_len, free_fnc_t data_free_fnc)
 {
     if (frag->len) {
@@ -834,6 +851,10 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
         ERROR("Cannot connect already connected (or connecting) client");
         return 1;
     }*/
+
+    if (clean_start)
+        buffer_purge(&client->buf);
+
     client->connect_msg = mqtt_ng_generate_connect(client, auth, lwt, clean_start, keep_alive);
     if (client->connect_msg == NULL) {
         return 1;
