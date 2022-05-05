@@ -1487,6 +1487,11 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
 #endif
         switch (get_control_packet_type(&client->parser)) {
             case MQTT_CPT_CONNACK:
+#ifdef MQTT_DEBUG_VERBOSE
+                DEBUG("Received CONNACK");
+#endif
+                mark_message_for_gc(client->connect_msg);
+                client->connect_msg = NULL;
                 if (client->client_state != CONNECTING) {
                     ERROR("Received unexpected CONNACK");
                     client->client_state = ERROR;
