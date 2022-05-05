@@ -23,16 +23,19 @@
 #define LOCK_HDR_BUFFER(client) pthread_mutex_lock(&client->buf_mutex)
 #define UNLOCK_HDR_BUFFER(client) pthread_mutex_unlock(&client->buf_mutex)
 
-#define BUFFER_FRAG_GARBAGE_COLLECT   0x01
+#define BUFFER_FRAG_GARBAGE_COLLECT         0x01
+// some packets can be marked for garbage collection
+// immediately when they are sent (e.g. sent PUBACK on QoS1)
+#define BUFFER_FRAG_GARBAGE_COLLECT_ON_SEND 0x02
 // as buffer fragment can point to both
 // external data and data in the same buffer
 // we mark the former case with BUFFER_FRAG_DATA_EXTERNAL
-#define BUFFER_FRAG_DATA_EXTERNAL     0x02
+#define BUFFER_FRAG_DATA_EXTERNAL           0x04
 // as single MQTT Packet can be stored into multiple
 // buffer fragments (depending on copy requirements)
 // this marks this fragment to be the first/last
-#define BUFFER_FRAG_MQTT_PACKET_HEAD  0x04
-#define BUFFER_FRAG_MQTT_PACKET_TAIL  0x08
+#define BUFFER_FRAG_MQTT_PACKET_HEAD        0x10
+#define BUFFER_FRAG_MQTT_PACKET_TAIL        0x20
 
 typedef uint16_t buffer_frag_flag_t;
 struct buffer_fragment {
@@ -586,6 +589,9 @@ void dump_buffer_fragment(struct buffer_fragment *frag)
         if (frag->flags & BUFFER_FRAG_GARBAGE_COLLECT) {
             printf(" BUFFER_FRAG_GARBAGE_COLLECT");
         }
+        if (frag->flags & BUFFER_FRAG_GARBAGE_COLLECT_ON_SEND) {
+            printf(" BUFFER_FRAG_GARBAGE_COLLECT_ON_SEND");
+        }
         if (frag->flags & BUFFER_FRAG_DATA_EXTERNAL) {
             printf(" BUFFER_FRAG_DATA_EXTERNAL");
         }
@@ -999,7 +1005,7 @@ static int mqtt_generate_puback(struct mqtt_ng_client *client, uint16_t packet_i
     // Start generating the message
     struct buffer_fragment *frag = NULL;
 
-    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD, frag, goto fail_rollback);
+    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD | BUFFER_FRAG_GARBAGE_COLLECT_ON_SEND, frag, goto fail_rollback);
 
     // MQTT Fixed Header
     size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + size;
@@ -1035,7 +1041,7 @@ static int mqtt_generate_pingreq(struct mqtt_ng_client *client)
     // Start generating the message
     struct buffer_fragment *frag = NULL;
 
-    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD | BUFFER_FRAG_MQTT_PACKET_TAIL, frag, goto fail_rollback);
+    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD | BUFFER_FRAG_MQTT_PACKET_TAIL | BUFFER_FRAG_GARBAGE_COLLECT_ON_SEND, frag, goto fail_rollback);
 
     CHECK_BYTES_AVAILABLE(client, 2, goto fail_rollback);
 
