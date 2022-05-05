@@ -4,6 +4,12 @@
 #include "ringbuffer.h"
 #include "common_public.h"
 
+#define MQTT_NG_MSGGEN_OK         0
+// MQTT_NG_MSGGEN_USER_ERROR means parameters given to this function
+// do not make sense or are out of MQTT specs
+#define MQTT_NG_MSGGEN_USER_ERROR 1
+#define MQTT_NG_MSGGEN_BUFFER_OOM 2
+
 struct mqtt_ng_client;
 
 /* Converts integer to MQTT Variable Byte Integer as per 1.5.5 of MQTT 5 specs
