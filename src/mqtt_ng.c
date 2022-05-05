@@ -942,7 +942,7 @@ static inline size_t mqtt_ng_subscribe_size(struct mqtt_sub *subs, size_t sub_co
     return len;
 }
 
-mqtt_msg_data mqtt_ng_generate_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subs, size_t sub_count)
+int mqtt_ng_generate_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subs, size_t sub_count)
 {
     // >> START THE RODEO <<
     buffer_transaction_start(client);
@@ -986,23 +986,18 @@ mqtt_msg_data mqtt_ng_generate_subscribe(struct mqtt_ng_client *client, struct m
 
     client->buf.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
     buffer_transaction_commit(client);
-    return ret;
+    return MQTT_NG_MSGGEN_OK;
 fail_rollback:
     buffer_transaction_rollback(client, ret);
-    return NULL;
+    return MQTT_NG_MSGGEN_BUFFER_OOM;
 }
 
 int mqtt_ng_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subs, size_t sub_count)
 {
-    mqtt_msg_data generated = mqtt_ng_generate_subscribe(client, subs, sub_count);
-
-    if (!generated)
-        return 1;
-
-    return 0;
+    TRY_GENERATE_MESSAGE(mqtt_ng_generate_subscribe, client, subs, sub_count);
 }
 
-mqtt_msg_data mqtt_ng_generate_disconnect(struct mqtt_ng_client *client, uint8_t reason_code)
+int mqtt_ng_generate_disconnect(struct mqtt_ng_client *client, uint8_t reason_code)
 {
     // >> START THE RODEO <<
     buffer_transaction_start(client);
