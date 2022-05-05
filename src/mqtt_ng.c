@@ -413,6 +413,9 @@ static void buffer_frag_free_data(struct buffer_fragment *frag)
 
 static void buffer_garbage_collect(struct mqtt_ng_client *client)
 {
+#ifdef MQTT_DEBUG_VERBOSE
+        DEBUG("Garbage Collection!");
+#endif
     LOCK_HDR_BUFFER(client);
     size_t shift_by = 0;
     struct buffer_fragment *frag = BUFFER_FIRST_FRAG(&client->buf);
