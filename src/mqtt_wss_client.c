@@ -890,7 +890,8 @@ void mqtt_wss_disconnect(mqtt_wss_client client, int timeout_ms)
 
     // Service WSS connection until remote closes connection (usual)
     // or timeout happens (unusual) in which case we close
-    while (!mqtt_wss_service(client, timeout_ms / 4));
+    mqtt_wss_service_all(client, timeout_ms / 4);
+
     close(client->sockfd);
     client->sockfd = -1;
 }
