@@ -1231,7 +1231,7 @@ static int parse_suback_varhdr(struct mqtt_ng_client *client)
             suback->reason_codes = calloc(suback->reason_code_count, sizeof(*suback->reason_codes));
             suback->reason_codes_pending = suback->reason_code_count;
             parser->varhdr_state = MQTT_PARSE_REASONCODES;
-            /* FALLTROUGH */
+            /* FALLTHROUGH */
         case MQTT_PARSE_REASONCODES:
             size_t avail = rbuf_bytes_available(parser->received_data);
             if (avail < 1)
@@ -1288,7 +1288,7 @@ static int parse_publish_varhdr(struct mqtt_ng_client *client)
                 return rc;
             parser->mqtt_parsed_len += parser->properties_parser.bytes_consumed;
             parser->varhdr_state = MQTT_PARSE_PAYLOAD;
-            /* FALLTROUGH */
+            /* FALLTHROUGH */
         case MQTT_PARSE_PAYLOAD:
             if (parser->mqtt_fixed_hdr_remaining_length < parser->mqtt_parsed_len) {
                 free(publish->topic);
