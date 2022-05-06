@@ -1266,6 +1266,7 @@ static int parse_suback_varhdr(struct mqtt_ng_client *client)
     struct mqtt_suback *suback = &client->parser.mqtt_packet.suback;
     switch (parser->varhdr_state) {
         case MQTT_PARSE_VARHDR_INITIAL:
+            suback->reason_codes = NULL;
             BUF_READ_CHECK_AT_LEAST(parser->received_data, 2);
             rbuf_pop(parser->received_data, (char*)&suback->packet_id, 2);
             suback->packet_id = be16toh(suback->packet_id);
@@ -1409,6 +1410,9 @@ static int parse_data(struct mqtt_ng_client *client)
                     return rc;
                 case MQTT_CPT_SUBACK:
                     rc = parse_suback_varhdr(client);
+                    if (rc != MQTT_NG_CLIENT_NEED_MORE_BYTES && rc != MQTT_NG_CLIENT_OK_CALL_AGAIN) {
+                        free(parser->mqtt_packet.suback.reason_codes);
+                    }
                     if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
                         parser->state = MQTT_PARSE_MQTT_PACKET_DONE;
                         break;
