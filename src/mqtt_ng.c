@@ -1091,6 +1091,7 @@ int mqtt_ng_ping(struct mqtt_ng_client *client)
 #define MQTT_NG_CLIENT_SERVER_RETURNED_ERROR  -2
 #define MQTT_NG_CLIENT_NOT_IMPL_YET           -3
 #define MQTT_NG_CLIENT_OOM                    -4
+#define MQTT_NG_CLIENT_INTERNAL_ERROR         -5
 
 #define BUF_READ_CHECK_AT_LEAST(buf, x)                 \
     if (rbuf_bytes_available(buf) < (x)) \
@@ -1169,6 +1170,9 @@ static int parse_connack_varhdr(struct mqtt_ng_client *client)
             break;
         case MQTT_PARSE_VARHDR_PROPS:
             return parse_properties_array(&parser->properties_parser, parser->received_data, client->log);
+        default:
+            ERROR("invalid state for connack varhdr parser");
+            return MQTT_NG_CLIENT_INTERNAL_ERROR;
     }
     return MQTT_NG_CLIENT_OK_CALL_AGAIN;
 }
@@ -1204,6 +1208,9 @@ static int parse_puback_varhdr(struct mqtt_ng_client *client)
             /* FALLTHROUGH */
         case MQTT_PARSE_VARHDR_PROPS:
             return parse_properties_array(&parser->properties_parser, parser->received_data, client->log);
+        default:
+            ERROR("invalid state for puback varhdr parser");
+            return MQTT_NG_CLIENT_INTERNAL_ERROR;
     }
     return MQTT_NG_CLIENT_OK_CALL_AGAIN;
 }
@@ -1243,6 +1250,9 @@ static int parse_suback_varhdr(struct mqtt_ng_client *client)
                 return MQTT_NG_CLIENT_PARSE_DONE;
 
             return MQTT_NG_CLIENT_NEED_MORE_BYTES;
+        default:
+            ERROR("invalid state for suback varhdr parser");
+            return MQTT_NG_CLIENT_INTERNAL_ERROR;
     }
     return MQTT_NG_CLIENT_OK_CALL_AGAIN;
 }
@@ -1314,6 +1324,9 @@ static int parse_publish_varhdr(struct mqtt_ng_client *client)
             parser->mqtt_parsed_len += publish->data_len;
 
             return MQTT_NG_CLIENT_PARSE_DONE;
+        default:
+            ERROR("invalid state for publish varhdr parser");
+            return MQTT_NG_CLIENT_INTERNAL_ERROR;
     }
     return MQTT_NG_CLIENT_OK_CALL_AGAIN;
 }
