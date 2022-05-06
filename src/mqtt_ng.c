@@ -1244,7 +1244,7 @@ static int parse_suback_varhdr(struct mqtt_ng_client *client)
             if (avail < 1)
                 return MQTT_NG_CLIENT_NEED_MORE_BYTES;
 
-            suback->reason_codes_pending -= rbuf_pop(parser->received_data, suback->reason_codes, MIN(suback->reason_codes_pending, avail));
+            suback->reason_codes_pending -= rbuf_pop(parser->received_data, (char*)suback->reason_codes, MIN(suback->reason_codes_pending, avail));
 
             if (!suback->reason_codes_pending)
                 return MQTT_NG_CLIENT_PARSE_DONE;
