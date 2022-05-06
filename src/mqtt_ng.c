@@ -1332,7 +1332,7 @@ static int parse_data(struct mqtt_ng_client *client)
             parser->state = MQTT_PARSE_FIXED_HEADER_LEN;
             break;
         case MQTT_PARSE_FIXED_HEADER_LEN:
-            int rc = vbi_parser_parse(&parser->vbi_parser, parser->received_data, client->log);
+            rc = vbi_parser_parse(&parser->vbi_parser, parser->received_data, client->log);
             if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
                 parser->mqtt_fixed_hdr_remaining_length = parser->vbi_parser.result;
                 parser->state = MQTT_PARSE_VARIABLE_HEADER;
@@ -1583,7 +1583,7 @@ int mqtt_ng_sync(struct mqtt_ng_client *client)
     int ac = handle_incoming_traffic(client);
     // TODO this is quick and dirty
     if (ac != MQTT_NG_CLIENT_NEED_MORE_BYTES) {
-        int ac = handle_incoming_traffic(client);
+        ac = handle_incoming_traffic(client);
     }
     if (ac == MQTT_NG_CLIENT_WANT_WRITE) {
         LOCK_HDR_BUFFER(client);
