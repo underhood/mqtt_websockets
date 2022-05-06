@@ -626,57 +626,6 @@ static int _optimized_add(struct mqtt_ng_client *client, void *data, size_t data
     return 0;
 }
 
-
-#include <stdio.h>
-/*
- * Prints count chars of mem to console or log.
- */
-void printMemory(const unsigned char mem[], int count)
-{
-    int i, k = 0;
-    char hexbyte[11] = "";
-    char hexline[126] = "";
-    for (i=0; i<count; i++) { // traverse through mem until count is reached
-        sprintf(hexbyte, "0x%02X ", mem[i]); // add current byte to hexbyte
-        strcat(hexline, hexbyte); // add hexbyte to hexline
-        // print line every 16 bytes or if this is the last for-loop
-        if (((i+1)%16 == 0) && (i != 0) || (i+1==count)) {
-            k++;
-            // choose your favourite output:
-            printf("l%d: %s\n",k , hexline); // print line to console
-            //syslog(LOG_INFO, "l%d: %s",k , hexline); // print line to syslog
-            //printk(KERN_INFO "l%d: %s",k , hexline); // print line to kernellog
-            memset(&hexline[0], 0, sizeof(hexline)); // clear hexline array
-        }
-    }
-}
-
-void dump_buffer_fragment(struct buffer_fragment *frag)
-{
-    int i = 0;
-    while(frag) {
-        printf("Fragment %d, len %zu, flags", i++, frag->len);
-        if (frag->flags & BUFFER_FRAG_GARBAGE_COLLECT) {
-            printf(" BUFFER_FRAG_GARBAGE_COLLECT");
-        }
-        if (frag->flags & BUFFER_FRAG_GARBAGE_COLLECT_ON_SEND) {
-            printf(" BUFFER_FRAG_GARBAGE_COLLECT_ON_SEND");
-        }
-        if (frag->flags & BUFFER_FRAG_DATA_EXTERNAL) {
-            printf(" BUFFER_FRAG_DATA_EXTERNAL");
-        }
-        if (frag->flags & BUFFER_FRAG_MQTT_PACKET_HEAD) {
-            printf(" BUFFER_FRAG_MQTT_PACKET_HEAD");
-        }
-        if (frag->flags & BUFFER_FRAG_MQTT_PACKET_TAIL) {
-            printf(" BUFFER_FRAG_MQTT_PACKET_TAIL");
-        }
-        printf(":\n");
-        printMemory(frag->data, frag->len);
-        frag = frag->next;
-    }
-}
-
 #define TRY_GENERATE_MESSAGE(generator_function, client, ...) \
     int rc = generator_function(client, ##__VA_ARGS__); \
     if (rc == MQTT_NG_MSGGEN_BUFFER_OOM) { \
