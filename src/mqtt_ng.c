@@ -829,9 +829,9 @@ static inline size_t mqtt_ng_publish_size(const char *topic,
 }
 
 int mqtt_ng_generate_publish(struct mqtt_ng_client *client,
-                             const char *topic,
+                             char *topic,
                              free_fnc_t topic_free,
-                             const void *msg,
+                             void *msg,
                              free_fnc_t msg_free,
                              size_t msg_len,
                              uint8_t publish_flags,
@@ -889,9 +889,9 @@ fail_rollback:
 }
 
 int mqtt_ng_publish(struct mqtt_ng_client *client,
-                    const char *topic,
+                    char *topic,
                     free_fnc_t topic_free,
-                    const void *msg,
+                    void *msg,
                     free_fnc_t msg_free,
                     size_t msg_len,
                     uint8_t publish_flags,

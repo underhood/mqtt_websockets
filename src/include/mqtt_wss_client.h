@@ -147,9 +147,9 @@ int mqtt_wss_publish_pid_block(mqtt_wss_client client, const char *topic, const 
 /* Publishes MQTT 5 message
  */
 int mqtt_wss_publish5(mqtt_wss_client client,
-                      const char *topic,
+                      char *topic,
                       free_fnc_t topic_free,
-                      const void *msg,
+                      void *msg,
                       free_fnc_t msg_free,
                       size_t msg_len,
                       uint8_t publish_flags,
@@ -161,6 +161,6 @@ int mqtt_wss_publish5(mqtt_wss_client client,
  * @param max_qos_level maximum QOS level that broker can send to us on this subscription
  * @return Returns 0 on success
  */
-int mqtt_wss_subscribe(mqtt_wss_client client, const char *topic, int max_qos_level);
+int mqtt_wss_subscribe(mqtt_wss_client client, char *topic, int max_qos_level);
 
 #endif /* MQTT_WSS_CLIENT_H */

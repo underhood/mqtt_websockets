@@ -1292,9 +1292,9 @@ int mqtt_wss_publish(mqtt_wss_client client, const char *topic, const void *msg,
 }
 
 int mqtt_wss_publish5(mqtt_wss_client client,
-                      const char *topic,
+                      char *topic,
                       free_fnc_t topic_free,
-                      const void *msg,
+                      void *msg,
                       free_fnc_t msg_free,
                       size_t msg_len,
                       uint8_t publish_flags,
@@ -1325,7 +1325,7 @@ int mqtt_wss_publish5(mqtt_wss_client client,
     return rc;
 }
 
-int mqtt_wss_subscribe(mqtt_wss_client client, const char *topic, int max_qos_level)
+int mqtt_wss_subscribe(mqtt_wss_client client, char *topic, int max_qos_level)
 {
     int ret;
 
