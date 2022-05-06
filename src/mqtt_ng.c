@@ -417,7 +417,6 @@ static void buffer_garbage_collect(struct mqtt_ng_client *client)
         DEBUG("Garbage Collection!");
 #endif
     LOCK_HDR_BUFFER(client);
-    size_t shift_by = 0;
     struct buffer_fragment *frag = BUFFER_FIRST_FRAG(&client->buf);
     while (frag) {
         if (!frag_is_marked_for_gc(frag))
