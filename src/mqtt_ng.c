@@ -443,7 +443,7 @@ static void buffer_garbage_collect(struct mqtt_ng_client *client)
 #endif
 
     memmove(client->buf.data, frag, client->buf.tail - (char*)frag);
-    frag = client->buf.data;
+    frag = (struct buffer_fragment*)client->buf.data;
     do {
         client->buf.tail = (char*)frag + sizeof(struct buffer_fragment);
         client->buf.tail_frag = frag;
@@ -452,7 +452,7 @@ static void buffer_garbage_collect(struct mqtt_ng_client *client)
             client->buf.tail += frag->len;
         }
         if (frag->next != NULL)
-            frag->next = client->buf.tail;
+            frag->next = (struct buffer_fragment*)client->buf.tail;
         frag = frag->next;
     } while(frag);
 
