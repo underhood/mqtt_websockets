@@ -1217,6 +1217,8 @@ static int parse_puback_varhdr(struct mqtt_ng_client *client)
 
 static int parse_suback_varhdr(struct mqtt_ng_client *client)
 {
+    int rc;
+    size_t avail;
     struct mqtt_ng_parser *parser = &client->parser;
     struct mqtt_suback *suback = &client->parser.mqtt_packet.suback;
     switch (parser->varhdr_state) {
@@ -1230,7 +1232,7 @@ static int parse_suback_varhdr(struct mqtt_ng_client *client)
             mqtt_properties_parser_ctx_reset(&parser->properties_parser);
             /* FALLTHROUGH */
         case MQTT_PARSE_VARHDR_PROPS:
-            int rc = parse_properties_array(&parser->properties_parser, parser->received_data, client->log);
+           rc = parse_properties_array(&parser->properties_parser, parser->received_data, client->log);
             if (rc != MQTT_NG_CLIENT_PARSE_DONE) 
                 return rc;
             parser->mqtt_parsed_len += parser->properties_parser.bytes_consumed;
@@ -1240,7 +1242,7 @@ static int parse_suback_varhdr(struct mqtt_ng_client *client)
             parser->varhdr_state = MQTT_PARSE_REASONCODES;
             /* FALLTHROUGH */
         case MQTT_PARSE_REASONCODES:
-            size_t avail = rbuf_bytes_available(parser->received_data);
+            avail = rbuf_bytes_available(parser->received_data);
             if (avail < 1)
                 return MQTT_NG_CLIENT_NEED_MORE_BYTES;
 
@@ -1259,6 +1261,7 @@ static int parse_suback_varhdr(struct mqtt_ng_client *client)
 
 static int parse_publish_varhdr(struct mqtt_ng_client *client)
 {
+    int rc;
     struct mqtt_ng_parser *parser = &client->parser;
     struct mqtt_publish *publish = &client->parser.mqtt_packet.publish;
     switch (parser->varhdr_state) {
@@ -1293,7 +1296,7 @@ static int parse_publish_varhdr(struct mqtt_ng_client *client)
             parser->mqtt_parsed_len += 2;
             /* FALLTHROUGH */
         case MQTT_PARSE_VARHDR_PROPS:
-            int rc = parse_properties_array(&parser->properties_parser, parser->received_data, client->log);
+            rc = parse_properties_array(&parser->properties_parser, parser->received_data, client->log);
             if (rc != MQTT_NG_CLIENT_PARSE_DONE) 
                 return rc;
             parser->mqtt_parsed_len += parser->properties_parser.bytes_consumed;
@@ -1512,6 +1515,7 @@ static int mark_packet_acked(struct mqtt_ng_client *client, uint16_t packet_id)
 int handle_incoming_traffic(struct mqtt_ng_client *client)
 {
     int rc;
+    struct mqtt_publish *pub;
     while( (rc = parse_data(client)) == MQTT_NG_CLIENT_OK_CALL_AGAIN );
     if ( rc == MQTT_NG_CLIENT_MQTT_PACKET_DONE ) {
 #ifdef MQTT_DEBUG_VERBOSE
@@ -1563,7 +1567,7 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
 #ifdef MQTT_DEBUG_VERBOSE
                 DEBUG("Recevied PUBLISH");
 #endif
-                struct mqtt_publish *pub = &client->parser.mqtt_packet.publish;
+                pub = &client->parser.mqtt_packet.publish;
                 if (pub->qos > 1) {
                     free(pub->topic);
                     free(pub->data);
