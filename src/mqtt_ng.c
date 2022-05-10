@@ -589,10 +589,16 @@ void buffer_transaction_rollback(struct mqtt_ng_client *client, struct buffer_fr
         frag = buffer_new_frag(client, (flags)); } \
       if(frag==NULL) { on_fail; }}
 
+#ifdef MQTT_DEBUG_VERBOSE
 #define CHECK_BYTES_AVAILABLE(client, needed, fail) \
     { if (BUFFER_BYTES_AVAILABLE(&client->buf) < (size_t)needed) { \
-        ERROR("Not enough bytes available in header buffer. Required: %zu, Available: %zu. mqtt_ng.c:%d", needed, BUFFER_BYTES_AVAILABLE(&client->buf), __LINE__); \
+        DEBUG("Not enough bytes available in header buffer. Required: %zu, Available: %zu. mqtt_ng.c:%d", needed, BUFFER_BYTES_AVAILABLE(&client->buf), __LINE__); \
         fail; } }
+#else
+#define CHECK_BYTES_AVAILABLE(client, needed, fail) \
+    { if (BUFFER_BYTES_AVAILABLE(&client->buf) < (size_t)needed) { \
+        fail; } }
+#endif
 
 #define DATA_ADVANCE(bytes, frag) { size_t b = (bytes); client->buf.tail += b; (frag)->len += b; }
 
