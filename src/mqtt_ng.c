@@ -1597,16 +1597,20 @@ int mqtt_ng_sync(struct mqtt_ng_client *client)
     try_send_all(client);
     UNLOCK_HDR_BUFFER(client);
 
-    int ac = handle_incoming_traffic(client);
-    // TODO this is quick and dirty
-    if (ac != MQTT_NG_CLIENT_NEED_MORE_BYTES) {
-        ac = handle_incoming_traffic(client);
+    int rc;
+
+    while ((rc = handle_incoming_traffic(client)) != MQTT_NG_CLIENT_NEED_MORE_BYTES) {
+        if (rc < 0)
+            break;
+        if (rc == MQTT_NG_CLIENT_WANT_WRITE) {
+            LOCK_HDR_BUFFER(client);
+            try_send_all(client);
+            UNLOCK_HDR_BUFFER(client);
+        }
     }
-    if (ac == MQTT_NG_CLIENT_WANT_WRITE) {
-        LOCK_HDR_BUFFER(client);
-        try_send_all(client);
-        UNLOCK_HDR_BUFFER(client);
-    }
+
+    if (rc < 0)
+        return rc;
 
     return 0;
 }
