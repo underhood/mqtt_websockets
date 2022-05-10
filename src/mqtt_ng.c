@@ -1481,7 +1481,7 @@ static void try_send_all(struct mqtt_ng_client *client) {
     do {
         if (client->sending_frag == NULL && mqtt_ng_next_to_send(client))
             return;
-    } while(!send_all_message_fragments(client));
+    } while(send_all_message_fragments(client) >= 0);
 }
 
 static inline void mark_message_for_gc(struct buffer_fragment *frag)

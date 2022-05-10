@@ -942,8 +942,11 @@ static int handle_mqtt_mqtt_c(mqtt_wss_client client)
 
 static int handle_mqtt_internal(mqtt_wss_client client)
 {
-    (void)client;
     mqtt_ng_sync(client->mqtt.mqtt_ctx);
+    if (client->mqtt_didnt_finish_write) {
+        client->mqtt_didnt_finish_write = 0;
+        client->poll_fds[POLLFD_SOCKET].events |= POLLOUT;
+    }
     return 0;
 }
 
