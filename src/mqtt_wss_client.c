@@ -933,20 +933,12 @@ static int handle_mqtt_mqtt_c(mqtt_wss_client client)
         client->mqtt_connected = 0;
         return 1;
     }
-    if (client->mqtt_didnt_finish_write) {
-        client->mqtt_didnt_finish_write = 0;
-        client->poll_fds[POLLFD_SOCKET].events |= POLLOUT;
-    }
     return 0;
 }
 
 static int handle_mqtt_internal(mqtt_wss_client client)
 {
     mqtt_ng_sync(client->mqtt.mqtt_ctx);
-    if (client->mqtt_didnt_finish_write) {
-        client->mqtt_didnt_finish_write = 0;
-        client->poll_fds[POLLFD_SOCKET].events |= POLLOUT;
-    }
     return 0;
 }
 
@@ -1072,6 +1064,11 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
 
     if (handle_mqtt(client))
         return MQTT_WSS_ERR_PROTO_MQTT;
+
+    if (client->mqtt_didnt_finish_write) {
+        client->mqtt_didnt_finish_write = 0;
+        client->poll_fds[POLLFD_SOCKET].events |= POLLOUT;
+    }
 
     if ((ptr = rbuf_get_linear_read_range(client->ws_client->buf_write, &size))) {
 #ifdef DEBUG_ULTRA_VERBOSE
