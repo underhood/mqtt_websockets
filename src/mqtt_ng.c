@@ -395,7 +395,7 @@ static struct buffer_fragment *buffer_new_frag(struct mqtt_ng_client *client, bu
 
 static void buffer_frag_free_data(struct buffer_fragment *frag)
 {
-    if ( frag->flags & BUFFER_FRAG_DATA_EXTERNAL ) {
+    if ( frag->flags & BUFFER_FRAG_DATA_EXTERNAL && frag->data != NULL) {
         switch (ptr2memory_mode(frag->free_fnc)) {
             case MEMCPY:
                 free(frag->data);
@@ -406,6 +406,7 @@ static void buffer_frag_free_data(struct buffer_fragment *frag)
             case CALLER_RESPONSIBLE:
                 break;
         }
+        frag->data = NULL;
     }
 }
 
@@ -1494,6 +1495,7 @@ static inline void mark_message_for_gc(struct buffer_fragment *frag)
 {
     while (frag) {
         frag->flags |= BUFFER_FRAG_GARBAGE_COLLECT;
+        buffer_frag_free_data(frag);
         if (frag->flags & BUFFER_FRAG_MQTT_PACKET_TAIL)
             return;
         frag = frag->next;
