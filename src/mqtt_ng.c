@@ -69,7 +69,8 @@ enum mqtt_client_state {
     CONNECT_PENDING,
     CONNECTING,
     CONNECTED, 
-    ERROR
+    ERROR,
+    DISCONNECTED
 };
 
 enum parser_state {
@@ -138,6 +139,10 @@ struct mqtt_publish {
     uint8_t qos;
 };
 
+struct mqtt_disconnect {
+    uint8_t reason_code;
+};
+
 struct mqtt_ng_parser {
     rbuf_t received_data;
 
@@ -158,6 +163,7 @@ struct mqtt_ng_parser {
         struct mqtt_puback puback;
         struct mqtt_suback suback;
         struct mqtt_publish publish;
+        struct mqtt_disconnect disconnect;
     } mqtt_packet;
 };
 
@@ -1184,6 +1190,32 @@ static int parse_connack_varhdr(struct mqtt_ng_client *client)
     return MQTT_NG_CLIENT_OK_CALL_AGAIN;
 }
 
+static int parse_disconnect_varhdr(struct mqtt_ng_client *client)
+{
+    struct mqtt_ng_parser *parser = &client->parser;
+    switch (parser->varhdr_state) {
+        case MQTT_PARSE_VARHDR_INITIAL:
+            if (!parser->mqtt_fixed_hdr_remaining_length) {
+                // [MQTT-3.14.2.1] if reason code omitted act same as == 0
+                parser->mqtt_packet.disconnect.reason_code = 0;
+                return MQTT_NG_CLIENT_PARSE_DONE;
+            }
+            BUF_READ_CHECK_AT_LEAST(parser->received_data, 1);
+            rbuf_pop(parser->received_data, (char*)&parser->mqtt_packet.connack.reason_code, 1);
+            if (parser->mqtt_fixed_hdr_remaining_length == 1)
+                return MQTT_NG_CLIENT_PARSE_DONE;
+            parser->varhdr_state = MQTT_PARSE_VARHDR_PROPS;
+            mqtt_properties_parser_ctx_reset(&parser->properties_parser);
+            break;
+        case MQTT_PARSE_VARHDR_PROPS:
+            return parse_properties_array(&parser->properties_parser, parser->received_data, client->log);
+        default:
+            ERROR("invalid state for connack varhdr parser");
+            return MQTT_NG_CLIENT_INTERNAL_ERROR;
+    }
+    return MQTT_NG_CLIENT_OK_CALL_AGAIN;
+}
+
 static int parse_puback_varhdr(struct mqtt_ng_client *client)
 {
     struct mqtt_ng_parser *parser = &client->parser;
@@ -1403,6 +1435,13 @@ static int parse_data(struct mqtt_ng_client *client)
                     }
                     parser->state = MQTT_PARSE_MQTT_PACKET_DONE;
                     break;
+                case MQTT_CPT_DISCONNECT:
+                    rc = parse_disconnect_varhdr(client);
+                    if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
+                        parser->state = MQTT_PARSE_MQTT_PACKET_DONE;
+                        break;
+                    }
+                    return rc;
                 default:
                     ERROR("Parsing Control Packet Type %" PRIu8 " not implemented yet.", get_control_packet_type(parser->mqtt_control_packet_type));
                     rbuf_bump_tail(parser->received_data, parser->mqtt_fixed_hdr_remaining_length);
@@ -1590,6 +1629,10 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
                 free(pub->topic);
                 free(pub->data);
                 return MQTT_NG_CLIENT_WANT_WRITE;
+            case MQTT_CPT_DISCONNECT:
+                INFO ("Got MQTT DISCONNECT control packet from server. Reason code: %d", (int)client->parser.mqtt_packet.disconnect.reason_code);
+                client->client_state = DISCONNECTED;
+                break;
         }
     }
 
@@ -1598,7 +1641,7 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
 
 int mqtt_ng_sync(struct mqtt_ng_client *client)
 {
-    if (client->client_state == RAW)
+    if (client->client_state == RAW || client->client_state == DISCONNECTED)
         return 0;
 
     LOCK_HDR_BUFFER(client);
