@@ -941,7 +941,7 @@ static int handle_mqtt_internal(mqtt_wss_client client)
     int rc = mqtt_ng_sync(client->mqtt.mqtt_ctx);
     if (rc)
         mws_error(client->log, "mqtt_ng_sync returned %d != 0", rc);
-    return rc;
+    return 1;
 }
 
 static int handle_mqtt(mqtt_wss_client client)
