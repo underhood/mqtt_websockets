@@ -325,7 +325,7 @@ int test_mqtt_vbi_to_uint32() {
 #endif /* TESTS */
 
 #define HEADER_BUFFER_SIZE 1024*1024
-//struct mqtt_ng_client *mqtt_ng_init(mqtt_wss_log_ctx_t log, rbuf_t data_in, mqtt_ng_send_fnc_t send_fnc, void *user_ctx) {
+
 struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings)
 {
     struct mqtt_ng_client *client = calloc(1, sizeof(struct mqtt_ng_client) + HEADER_BUFFER_SIZE);
