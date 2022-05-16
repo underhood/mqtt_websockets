@@ -627,10 +627,10 @@ static size_t mqtt_ng_connect_size(struct mqtt_auth_properties *auth,
       if(frag==NULL) { on_fail; }}
 
 #define CHECK_BYTES_AVAILABLE(buf, needed, fail) \
-    { if (BUFFER_BYTES_AVAILABLE(&(buf)->state) < (size_t)needed) { \
+    { if (BUFFER_BYTES_AVAILABLE(buf) < (size_t)needed) { \
         fail; } }
 
-#define DATA_ADVANCE(buffer, bytes, frag) { size_t b = (bytes); (buffer)->state.tail += b; (frag)->len += b; }
+#define DATA_ADVANCE(buf, bytes, frag) { size_t b = (bytes); (buf)->tail += b; (frag)->len += b; }
 
 // TODO maybe just user client->buf.tail?
 #define WRITE_POS(frag) (&(frag->data[frag->len]))
@@ -639,15 +639,15 @@ static size_t mqtt_ng_connect_size(struct mqtt_auth_properties *auth,
 #define PACK_2B_INT(buffer, integer, frag) { *(uint16_t *)WRITE_POS(frag) = htobe16((integer)); \
             DATA_ADVANCE(buffer, sizeof(uint16_t), frag); }
 
-static int _optimized_add(struct mqtt_ng_client *client, void *data, size_t data_len, free_fnc_t data_free_fnc, struct buffer_fragment **frag)
+static int _optimized_add(struct header_buffer *buf, mqtt_wss_log_ctx_t log_ctx, void *data, size_t data_len, free_fnc_t data_free_fnc, struct buffer_fragment **frag)
 {
     if (data_len > SMALL_STRING_DONT_FRAGMENT_LIMIT) {
-        if( (*frag = buffer_new_frag(&client->main_buffer.state, BUFFER_FRAG_DATA_EXTERNAL)) == NULL ) {
-            ERROR("Out of buffer space while generating the message");
+        if( (*frag = buffer_new_frag(buf, BUFFER_FRAG_DATA_EXTERNAL)) == NULL ) {
+            mws_error(log_ctx, "Out of buffer space while generating the message");
             return 1;
         }
-        if (frag_set_external_data(client->log, *frag, data, data_len, data_free_fnc)) {
-            ERROR("Error adding external data to newly created fragment");
+        if (frag_set_external_data(log_ctx, *frag, data, data_len, data_free_fnc)) {
+            mws_error(log_ctx, "Error adding external data to newly created fragment");
             return 1;
         }
         // we dont want to write to this fragment anymore
@@ -655,9 +655,9 @@ static int _optimized_add(struct mqtt_ng_client *client, void *data, size_t data
     } else if (data_len) {
         // if the data are small dont bother creating new fragments
         // store in buffer directly
-        CHECK_BYTES_AVAILABLE(&client->main_buffer, data_len, return 1);
-        memcpy(client->main_buffer.state.tail, data, data_len);
-        DATA_ADVANCE(&client->main_buffer, data_len, *frag);
+        CHECK_BYTES_AVAILABLE(buf, data_len, return 1);
+        memcpy(buf->tail, data, data_len);
+        DATA_ADVANCE(buf, data_len, *frag);
     }
     return 0;
 }
@@ -735,14 +735,14 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
 
     // MQTT Fixed Header
     size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + sizeof(mqtt_protocol_name_frag) + 1 /* CONNECT FLAGS */ + 2 /* keepalive */ + 1 /* Properties TODO now fixed 0*/;
-    CHECK_BYTES_AVAILABLE(&client->main_buffer, needed_bytes, goto fail_rollback);
+    CHECK_BYTES_AVAILABLE(&client->main_buffer.state, needed_bytes, goto fail_rollback);
 
     *WRITE_POS(frag) = MQTT_CPT_CONNECT << 4;
-    DATA_ADVANCE(&client->main_buffer, 1, frag);
-    DATA_ADVANCE(&client->main_buffer, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
+    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
+    DATA_ADVANCE(&client->main_buffer.state, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
 
     memcpy(WRITE_POS(frag), mqtt_protocol_name_frag, sizeof(mqtt_protocol_name_frag));
-    DATA_ADVANCE(&client->main_buffer, sizeof(mqtt_protocol_name_frag), frag);
+    DATA_ADVANCE(&client->main_buffer.state, sizeof(mqtt_protocol_name_frag), frag);
 
     // [MQTT-3.1.2.3] Connect flags
     char *connect_flags = WRITE_POS(frag);
@@ -760,40 +760,40 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
     if (clean_start)
         *connect_flags |= MQTT_CONNECT_FLAG_CLEAN_START;
 
-    DATA_ADVANCE(&client->main_buffer, 1, frag);
+    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
 
-    PACK_2B_INT(&client->main_buffer, keep_alive, frag);
+    PACK_2B_INT(&client->main_buffer.state, keep_alive, frag);
 
     // TODO Property Length [MQTT-3.1.3.2.1] temporary fixed 0
     *WRITE_POS(frag) = 0;
-    DATA_ADVANCE(&client->main_buffer, 1, frag);
+    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
 
     // [MQTT-3.1.3.1] Client identifier
-    CHECK_BYTES_AVAILABLE(&client->main_buffer, 2, goto fail_rollback);
-    PACK_2B_INT(&client->main_buffer, strlen(auth->client_id), frag);
-    if (_optimized_add(client, auth->client_id, strlen(auth->client_id), auth->client_id_free, &frag))
+    CHECK_BYTES_AVAILABLE(&client->main_buffer.state, 2, goto fail_rollback);
+    PACK_2B_INT(&client->main_buffer.state, strlen(auth->client_id), frag);
+    if (_optimized_add(&client->main_buffer.state, client->log, auth->client_id, strlen(auth->client_id), auth->client_id_free, &frag))
         goto fail_rollback;
 
     if (lwt != NULL) {
         // Will Properties [MQTT-3.1.3.2]
         // TODO for now fixed 0
         BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
-        CHECK_BYTES_AVAILABLE(&client->main_buffer, 1, goto fail_rollback);
+        CHECK_BYTES_AVAILABLE(&client->main_buffer.state, 1, goto fail_rollback);
         *WRITE_POS(frag) = 0;
-        DATA_ADVANCE(&client->main_buffer, 1, frag);
+        DATA_ADVANCE(&client->main_buffer.state, 1, frag);
 
         // Will Topic [MQTT-3.1.3.3]
-        CHECK_BYTES_AVAILABLE(&client->main_buffer, 2, goto fail_rollback);
-        PACK_2B_INT(&client->main_buffer, strlen(lwt->will_topic), frag);
-        if (_optimized_add(client, lwt->will_topic, strlen(lwt->will_topic), lwt->will_topic_free, &frag))
+        CHECK_BYTES_AVAILABLE(&client->main_buffer.state, 2, goto fail_rollback);
+        PACK_2B_INT(&client->main_buffer.state, strlen(lwt->will_topic), frag);
+        if (_optimized_add(&client->main_buffer.state, client->log, lwt->will_topic, strlen(lwt->will_topic), lwt->will_topic_free, &frag))
             goto fail_rollback;
 
         // Will Payload [MQTT-3.1.3.4]
         if (lwt->will_message_size) {
             BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
-            CHECK_BYTES_AVAILABLE(&client->main_buffer, 2, goto fail_rollback);
-            PACK_2B_INT(&client->main_buffer, lwt->will_message_size, frag);
-            if (_optimized_add(client, lwt->will_message, lwt->will_message_size, lwt->will_topic_free, &frag))
+            CHECK_BYTES_AVAILABLE(&client->main_buffer.state, 2, goto fail_rollback);
+            PACK_2B_INT(&client->main_buffer.state, lwt->will_message_size, frag);
+            if (_optimized_add(&client->main_buffer.state, client->log, lwt->will_message, lwt->will_message_size, lwt->will_topic_free, &frag))
                 goto fail_rollback;
         }
     }
@@ -801,18 +801,18 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
     // [MQTT-3.1.3.5]
     if (auth->username) {
         BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
-        CHECK_BYTES_AVAILABLE(&client->main_buffer, 2, goto fail_rollback);
-        PACK_2B_INT(&client->main_buffer, strlen(auth->username), frag);
-        if (_optimized_add(client, auth->username, strlen(auth->username), auth->username_free, &frag))
+        CHECK_BYTES_AVAILABLE(&client->main_buffer.state, 2, goto fail_rollback);
+        PACK_2B_INT(&client->main_buffer.state, strlen(auth->username), frag);
+        if (_optimized_add(&client->main_buffer.state, client->log, auth->username, strlen(auth->username), auth->username_free, &frag))
             goto fail_rollback;
     }
 
     // [MQTT-3.1.3.6]
     if (auth->password) {
         BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
-        CHECK_BYTES_AVAILABLE(&client->main_buffer, 2, goto fail_rollback);
-        PACK_2B_INT(&client->main_buffer, strlen(auth->password), frag);
-        if (_optimized_add(client, auth->password, strlen(auth->password), auth->password_free, &frag))
+        CHECK_BYTES_AVAILABLE(&client->main_buffer.state, 2, goto fail_rollback);
+        PACK_2B_INT(&client->main_buffer.state, strlen(auth->password), frag);
+        if (_optimized_add(&client->main_buffer.state, client->log, auth->password, strlen(auth->password), auth->password_free, &frag))
             goto fail_rollback;
     }
     client->main_buffer.state.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
@@ -890,27 +890,27 @@ int mqtt_ng_generate_publish(struct mqtt_ng_client *client,
 
     // MQTT Fixed Header
     size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + size - msg_len;
-    CHECK_BYTES_AVAILABLE(&client->main_buffer, needed_bytes, goto fail_rollback);
+    CHECK_BYTES_AVAILABLE(&client->main_buffer.state, needed_bytes, goto fail_rollback);
 
     *WRITE_POS(frag) = (MQTT_CPT_PUBLISH << 4) | (publish_flags & 0xF);
-    DATA_ADVANCE(&client->main_buffer, 1, frag);
-    DATA_ADVANCE(&client->main_buffer, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
+    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
+    DATA_ADVANCE(&client->main_buffer.state, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
 
     // MQTT Variable Header
     // [MQTT-3.3.2.1]
-    PACK_2B_INT(&client->main_buffer, strlen(topic), frag);
-    if (_optimized_add(client, topic, strlen(topic), topic_free, &frag))
+    PACK_2B_INT(&client->main_buffer.state, strlen(topic), frag);
+    if (_optimized_add(&client->main_buffer.state, client->log, topic, strlen(topic), topic_free, &frag))
         goto fail_rollback;
     BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
 
     // [MQTT-3.3.2.2]
     mqtt_msg->packet_id = get_unused_packet_id();
     *packet_id = mqtt_msg->packet_id;
-    PACK_2B_INT(&client->main_buffer, mqtt_msg->packet_id, frag);
+    PACK_2B_INT(&client->main_buffer.state, mqtt_msg->packet_id, frag);
 
     // [MQTT-3.3.2.3.1] TODO Property Length for now fixed 0
     *WRITE_POS(frag) = 0;
-    DATA_ADVANCE(&client->main_buffer, 1, frag);
+    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
 
     if( (frag = buffer_new_frag(&client->main_buffer.state, BUFFER_FRAG_DATA_EXTERNAL)) == NULL )
         goto fail_rollback;
@@ -966,29 +966,29 @@ int mqtt_ng_generate_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *s
 
     // MQTT Fixed Header
     size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + 3 /*Packet ID + Property Length*/;
-    CHECK_BYTES_AVAILABLE(&client->main_buffer, needed_bytes, goto fail_rollback);
+    CHECK_BYTES_AVAILABLE(&client->main_buffer.state, needed_bytes, goto fail_rollback);
 
     *WRITE_POS(frag) = (MQTT_CPT_SUBSCRIBE << 4) | 0x2 /* [MQTT-3.8.1-1] */;
-    DATA_ADVANCE(&client->main_buffer, 1, frag);
-    DATA_ADVANCE(&client->main_buffer, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
+    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
+    DATA_ADVANCE(&client->main_buffer.state, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
 
     // MQTT Variable Header
     // [MQTT-3.8.2] PacketID
     ret->packet_id = get_unused_packet_id();
-    PACK_2B_INT(&client->main_buffer, ret->packet_id, frag);
+    PACK_2B_INT(&client->main_buffer.state, ret->packet_id, frag);
 
     // [MQTT-3.8.2.1.1] Property Length // TODO for now fixed 0
     *WRITE_POS(frag) = 0;
-    DATA_ADVANCE(&client->main_buffer, 1, frag);
+    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
 
     for (size_t i = 0; i < sub_count; i++) {
         BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
-        PACK_2B_INT(&client->main_buffer, strlen(subs[i].topic), frag);
-        if (_optimized_add(client, subs[i].topic, strlen(subs[i].topic), subs[i].topic_free, &frag))
+        PACK_2B_INT(&client->main_buffer.state, strlen(subs[i].topic), frag);
+        if (_optimized_add(&client->main_buffer.state, client->log, subs[i].topic, strlen(subs[i].topic), subs[i].topic_free, &frag))
             goto fail_rollback;
         BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
         *WRITE_POS(frag) = subs[i].options;
-        DATA_ADVANCE(&client->main_buffer, 1, frag);
+        DATA_ADVANCE(&client->main_buffer.state, 1, frag);
     }
 
     client->main_buffer.state.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
@@ -1021,17 +1021,17 @@ int mqtt_ng_generate_disconnect(struct mqtt_ng_client *client, uint8_t reason_co
 
     // MQTT Fixed Header
     size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + (reason_code ? 1 : 0);
-    CHECK_BYTES_AVAILABLE(&client->main_buffer, needed_bytes, goto fail_rollback);
+    CHECK_BYTES_AVAILABLE(&client->main_buffer.state, needed_bytes, goto fail_rollback);
 
     *WRITE_POS(frag) = MQTT_CPT_DISCONNECT << 4;
-    DATA_ADVANCE(&client->main_buffer, 1, frag);
-    DATA_ADVANCE(&client->main_buffer, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
+    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
+    DATA_ADVANCE(&client->main_buffer.state, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
 
     if (reason_code) {
         // MQTT Variable Header
         // [MQTT-3.14.2.1] PacketID
         *WRITE_POS(frag) = reason_code;
-        DATA_ADVANCE(&client->main_buffer, 1, frag);
+        DATA_ADVANCE(&client->main_buffer.state, 1, frag);
     }
 
     client->main_buffer.state.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
@@ -1062,20 +1062,20 @@ static int mqtt_generate_puback(struct mqtt_ng_client *client, uint16_t packet_i
 
     // MQTT Fixed Header
     size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + size;
-    CHECK_BYTES_AVAILABLE(&client->main_buffer, needed_bytes, goto fail_rollback);
+    CHECK_BYTES_AVAILABLE(&client->main_buffer.state, needed_bytes, goto fail_rollback);
 
     *WRITE_POS(frag) = MQTT_CPT_PUBACK << 4;
-    DATA_ADVANCE(&client->main_buffer, 1, frag);
-    DATA_ADVANCE(&client->main_buffer, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
+    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
+    DATA_ADVANCE(&client->main_buffer.state, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
 
     // MQTT Variable Header
-    PACK_2B_INT(&client->main_buffer, packet_id, frag);
+    PACK_2B_INT(&client->main_buffer.state, packet_id, frag);
 
     if (reason_code) {
         // MQTT Variable Header
         // [MQTT-3.14.2.1] PacketID
         *WRITE_POS(frag) = reason_code;
-        DATA_ADVANCE(&client->main_buffer, 1, frag);
+        DATA_ADVANCE(&client->main_buffer.state, 1, frag);
     }
 
     client->main_buffer.state.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
