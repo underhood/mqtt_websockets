@@ -47,9 +47,6 @@ struct buffer_fragment {
 
     uint16_t packet_id;
 
-    // next is not NULL only if there is
-    // another fragment for the same MQTT message
-    // it doesn't point to next fragment in the buffer
     struct buffer_fragment *next;
 };
 
