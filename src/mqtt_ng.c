@@ -196,6 +196,20 @@ struct mqtt_ng_client {
     void (*puback_callback)(uint16_t packet_id);
     void (*connack_callback)(void* user_ctx, int connack_reply);
     void (*msg_callback)(const char *topic, const void *msg, size_t msglen, int qos);
+
+    int ping_pending:1;
+};
+
+char pingreq[] = { MQTT_CPT_PINGREQ << 4, 0x00 };
+
+struct buffer_fragment ping_frag = {
+    .data = pingreq,
+    .flags =  BUFFER_FRAG_MQTT_PACKET_HEAD | BUFFER_FRAG_MQTT_PACKET_TAIL,
+    .free_fnc = NULL,
+    .len = sizeof(pingreq),
+    .next = NULL,
+    .sent = 0,
+    .packet_id = 0
 };
 
 int uint32_to_mqtt_vbi(uint32_t input, char *output) {
@@ -1092,7 +1106,8 @@ fail_rollback:
 
 int mqtt_ng_ping(struct mqtt_ng_client *client)
 {
-    TRY_GENERATE_MESSAGE(mqtt_generate_pingreq, client);
+    client->ping_pending = 1;
+    return MQTT_NG_MSGGEN_OK;
 }
 
 #define MQTT_NG_CLIENT_NEED_MORE_BYTES         0x10
@@ -1470,6 +1485,14 @@ static int mqtt_ng_next_to_send(struct mqtt_ng_client *client) {
     }
     if (client->client_state != CONNECTED)
         return -1;
+
+    if (client->ping_pending) {
+        client->ping_pending = 0;
+        ping_frag.sent = 0;
+        client->sending_frag = &ping_frag;
+        client->sending_msg = &ping_frag;
+        return 0;
+    }
 
     struct buffer_fragment *frag = BUFFER_FIRST_FRAG(&client->buf);
     while (frag) {
