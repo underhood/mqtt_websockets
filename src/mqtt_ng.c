@@ -621,9 +621,9 @@ static size_t mqtt_ng_connect_size(struct mqtt_auth_properties *auth,
     return size;
 }
 
-#define BUFFER_TRANSACTION_NEW_FRAG(client, flags, frag, on_fail) \
+#define BUFFER_TRANSACTION_NEW_FRAG(buf, flags, frag, on_fail) \
     { if(frag==NULL) { \
-        frag = buffer_new_frag(&client->main_buffer.state, (flags)); } \
+        frag = buffer_new_frag(buf, (flags)); } \
       if(frag==NULL) { on_fail; }}
 
 #define CHECK_BYTES_AVAILABLE(buf, needed, fail) \
@@ -662,19 +662,20 @@ static int _optimized_add(struct header_buffer *buf, mqtt_wss_log_ctx_t log_ctx,
     return 0;
 }
 
-#define TRY_GENERATE_MESSAGE(generator_function, client, ...) \
-    int rc = generator_function(client, ##__VA_ARGS__); \
+#define TRY_GENERATE_MESSAGE(generator_function, buf, log_ctx, ...) \
+    int rc = generator_function(buf, log_ctx, ##__VA_ARGS__); \
     if (rc == MQTT_NG_MSGGEN_BUFFER_OOM) { \
-        LOCK_HDR_BUFFER(&client->main_buffer); \
-        buffer_garbage_collect(&client->main_buffer.state, client->log); \
-        UNLOCK_HDR_BUFFER(&client->main_buffer); \
-        rc = generator_function(client, ##__VA_ARGS__); \
+        LOCK_HDR_BUFFER(buf); \
+        buffer_garbage_collect(&((buf)->state), log_ctx); \
+        UNLOCK_HDR_BUFFER(buf); \
+        rc = generator_function(buf, log_ctx, ##__VA_ARGS__); \
         if (rc == MQTT_NG_MSGGEN_BUFFER_OOM) \
-            ERROR("%s failed to generate message due to insufficient buffer space (line %d)", __FUNCTION__, __LINE__); \
+            mws_error(log_ctx, "%s failed to generate message due to insufficient buffer space (line %d)", __FUNCTION__, __LINE__); \
     } \
     return rc;
 
-mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
+mqtt_msg_data mqtt_ng_generate_connect(struct transaction_buffer *trx_buf,
+                                       mqtt_wss_log_ctx_t log_ctx,
                                        struct mqtt_auth_properties *auth,
                                        struct mqtt_lwt_properties *lwt,
                                        uint8_t clean_start,
@@ -682,7 +683,7 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
 {
     // Sanity Checks First (are given parameters correct and up to MQTT spec)
     if (!auth->client_id) {
-        ERROR("ClientID must be set. [MQTT-3.1.3-3]");
+        mws_error(log_ctx, "ClientID must be set. [MQTT-3.1.3-3]");
         return NULL;
     }
 
@@ -693,35 +694,35 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
         // however server MUST allow ClientIDs between 1-23 bytes [MQTT-3.1.3-5]
         // so we will warn client server might not like this and he is using it
         // at his own risk!
-        WARN("client_id provided is empty string. This might not be allowed by server [MQTT-3.1.3-6]");
+        mws_warn(log_ctx, "client_id provided is empty string. This might not be allowed by server [MQTT-3.1.3-6]");
     }
     if(len > MQTT_MAX_CLIENT_ID) {
         // [MQTT-3.1.3-5] server MUST allow client_id length 1-32
         // server MAY allow longer client_id, if user provides longer client_id
         // warn them he is doing so at his own risk!
-        WARN("client_id provided is longer than 23 bytes, server might not allow that [MQTT-3.1.3-5]");
+        mws_warn(log_ctx, "client_id provided is longer than 23 bytes, server might not allow that [MQTT-3.1.3-5]");
     }
 
     if (lwt) {
         if (lwt->will_message && lwt->will_message_size > 65535) {
-            ERROR("Will message cannot be longer than 65535 bytes due to MQTT protocol limitations [MQTT-3.1.3-4] and [MQTT-1.5.6]");
+            mws_error(log_ctx, "Will message cannot be longer than 65535 bytes due to MQTT protocol limitations [MQTT-3.1.3-4] and [MQTT-1.5.6]");
             return NULL;
         }
 
         if (!lwt->will_topic) { //TODO topic given with strlen==0 ? check specs
-            ERROR("If will message is given will topic must also be given [MQTT-3.1.3.3]");
+            mws_error(log_ctx, "If will message is given will topic must also be given [MQTT-3.1.3.3]");
             return NULL;
         }
 
         if (lwt->will_qos > MQTT_MAX_QOS) {
             // refer to [MQTT-3-1.2-12]
-            ERROR("QOS for LWT message is bigger than max");
+            mws_error(log_ctx, "QOS for LWT message is bigger than max");
             return NULL;
         }
     }
 
     // >> START THE RODEO <<
-    transaction_buffer_transaction_start(&client->main_buffer);
+    transaction_buffer_transaction_start(trx_buf);
 
     // Calculate the resulting message size sans fixed MQTT header
     size_t size = mqtt_ng_connect_size(auth, lwt);
@@ -730,19 +731,19 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
     struct buffer_fragment *frag = NULL;
     mqtt_msg_data ret = NULL;
 
-    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD, frag, goto fail_rollback );
+    BUFFER_TRANSACTION_NEW_FRAG(&trx_buf->state, BUFFER_FRAG_MQTT_PACKET_HEAD, frag, goto fail_rollback );
     ret = frag;
 
     // MQTT Fixed Header
     size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + sizeof(mqtt_protocol_name_frag) + 1 /* CONNECT FLAGS */ + 2 /* keepalive */ + 1 /* Properties TODO now fixed 0*/;
-    CHECK_BYTES_AVAILABLE(&client->main_buffer.state, needed_bytes, goto fail_rollback);
+    CHECK_BYTES_AVAILABLE(&trx_buf->state, needed_bytes, goto fail_rollback);
 
     *WRITE_POS(frag) = MQTT_CPT_CONNECT << 4;
-    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
-    DATA_ADVANCE(&client->main_buffer.state, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
+    DATA_ADVANCE(&trx_buf->state, 1, frag);
+    DATA_ADVANCE(&trx_buf->state, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
 
     memcpy(WRITE_POS(frag), mqtt_protocol_name_frag, sizeof(mqtt_protocol_name_frag));
-    DATA_ADVANCE(&client->main_buffer.state, sizeof(mqtt_protocol_name_frag), frag);
+    DATA_ADVANCE(&trx_buf->state, sizeof(mqtt_protocol_name_frag), frag);
 
     // [MQTT-3.1.2.3] Connect flags
     char *connect_flags = WRITE_POS(frag);
@@ -760,66 +761,66 @@ mqtt_msg_data mqtt_ng_generate_connect(struct mqtt_ng_client *client,
     if (clean_start)
         *connect_flags |= MQTT_CONNECT_FLAG_CLEAN_START;
 
-    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
+    DATA_ADVANCE(&trx_buf->state, 1, frag);
 
-    PACK_2B_INT(&client->main_buffer.state, keep_alive, frag);
+    PACK_2B_INT(&trx_buf->state, keep_alive, frag);
 
     // TODO Property Length [MQTT-3.1.3.2.1] temporary fixed 0
     *WRITE_POS(frag) = 0;
-    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
+    DATA_ADVANCE(&trx_buf->state, 1, frag);
 
     // [MQTT-3.1.3.1] Client identifier
-    CHECK_BYTES_AVAILABLE(&client->main_buffer.state, 2, goto fail_rollback);
-    PACK_2B_INT(&client->main_buffer.state, strlen(auth->client_id), frag);
-    if (_optimized_add(&client->main_buffer.state, client->log, auth->client_id, strlen(auth->client_id), auth->client_id_free, &frag))
+    CHECK_BYTES_AVAILABLE(&trx_buf->state, 2, goto fail_rollback);
+    PACK_2B_INT(&trx_buf->state, strlen(auth->client_id), frag);
+    if (_optimized_add(&trx_buf->state, log_ctx, auth->client_id, strlen(auth->client_id), auth->client_id_free, &frag))
         goto fail_rollback;
 
     if (lwt != NULL) {
         // Will Properties [MQTT-3.1.3.2]
         // TODO for now fixed 0
-        BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
-        CHECK_BYTES_AVAILABLE(&client->main_buffer.state, 1, goto fail_rollback);
+        BUFFER_TRANSACTION_NEW_FRAG(&trx_buf->state, 0, frag, goto fail_rollback);
+        CHECK_BYTES_AVAILABLE(&trx_buf->state, 1, goto fail_rollback);
         *WRITE_POS(frag) = 0;
-        DATA_ADVANCE(&client->main_buffer.state, 1, frag);
+        DATA_ADVANCE(&trx_buf->state, 1, frag);
 
         // Will Topic [MQTT-3.1.3.3]
-        CHECK_BYTES_AVAILABLE(&client->main_buffer.state, 2, goto fail_rollback);
-        PACK_2B_INT(&client->main_buffer.state, strlen(lwt->will_topic), frag);
-        if (_optimized_add(&client->main_buffer.state, client->log, lwt->will_topic, strlen(lwt->will_topic), lwt->will_topic_free, &frag))
+        CHECK_BYTES_AVAILABLE(&trx_buf->state, 2, goto fail_rollback);
+        PACK_2B_INT(&trx_buf->state, strlen(lwt->will_topic), frag);
+        if (_optimized_add(&trx_buf->state, log_ctx, lwt->will_topic, strlen(lwt->will_topic), lwt->will_topic_free, &frag))
             goto fail_rollback;
 
         // Will Payload [MQTT-3.1.3.4]
         if (lwt->will_message_size) {
-            BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
-            CHECK_BYTES_AVAILABLE(&client->main_buffer.state, 2, goto fail_rollback);
-            PACK_2B_INT(&client->main_buffer.state, lwt->will_message_size, frag);
-            if (_optimized_add(&client->main_buffer.state, client->log, lwt->will_message, lwt->will_message_size, lwt->will_topic_free, &frag))
+            BUFFER_TRANSACTION_NEW_FRAG(&trx_buf->state, 0, frag, goto fail_rollback);
+            CHECK_BYTES_AVAILABLE(&trx_buf->state, 2, goto fail_rollback);
+            PACK_2B_INT(&trx_buf->state, lwt->will_message_size, frag);
+            if (_optimized_add(&trx_buf->state, log_ctx, lwt->will_message, lwt->will_message_size, lwt->will_topic_free, &frag))
                 goto fail_rollback;
         }
     }
 
     // [MQTT-3.1.3.5]
     if (auth->username) {
-        BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
-        CHECK_BYTES_AVAILABLE(&client->main_buffer.state, 2, goto fail_rollback);
-        PACK_2B_INT(&client->main_buffer.state, strlen(auth->username), frag);
-        if (_optimized_add(&client->main_buffer.state, client->log, auth->username, strlen(auth->username), auth->username_free, &frag))
+        BUFFER_TRANSACTION_NEW_FRAG(&trx_buf->state, 0, frag, goto fail_rollback);
+        CHECK_BYTES_AVAILABLE(&trx_buf->state, 2, goto fail_rollback);
+        PACK_2B_INT(&trx_buf->state, strlen(auth->username), frag);
+        if (_optimized_add(&trx_buf->state, log_ctx, auth->username, strlen(auth->username), auth->username_free, &frag))
             goto fail_rollback;
     }
 
     // [MQTT-3.1.3.6]
     if (auth->password) {
-        BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
-        CHECK_BYTES_AVAILABLE(&client->main_buffer.state, 2, goto fail_rollback);
-        PACK_2B_INT(&client->main_buffer.state, strlen(auth->password), frag);
-        if (_optimized_add(&client->main_buffer.state, client->log, auth->password, strlen(auth->password), auth->password_free, &frag))
+        BUFFER_TRANSACTION_NEW_FRAG(&trx_buf->state, 0, frag, goto fail_rollback);
+        CHECK_BYTES_AVAILABLE(&trx_buf->state, 2, goto fail_rollback);
+        PACK_2B_INT(&trx_buf->state, strlen(auth->password), frag);
+        if (_optimized_add(&trx_buf->state, log_ctx, auth->password, strlen(auth->password), auth->password_free, &frag))
             goto fail_rollback;
     }
-    client->main_buffer.state.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
-    transaction_buffer_transaction_commit(&client->main_buffer);
+    trx_buf->state.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
+    transaction_buffer_transaction_commit(trx_buf);
     return ret;
 fail_rollback:
-    transaction_buffer_transaction_rollback(&client->main_buffer, ret);
+    transaction_buffer_transaction_rollback(trx_buf, ret);
     return NULL;
 }
 
@@ -841,7 +842,7 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
     if (clean_start)
         buffer_purge(&client->main_buffer.state);
 
-    client->connect_msg = mqtt_ng_generate_connect(client, auth, lwt, clean_start, keep_alive);
+    client->connect_msg = mqtt_ng_generate_connect(&client->main_buffer, client->log, auth, lwt, clean_start, keep_alive);
     if (client->connect_msg == NULL) {
         return 1;
     }
@@ -866,7 +867,8 @@ static inline size_t mqtt_ng_publish_size(const char *topic,
         + msg_len;
 }
 
-int mqtt_ng_generate_publish(struct mqtt_ng_client *client,
+int mqtt_ng_generate_publish(struct transaction_buffer *trx_buf,
+                             mqtt_wss_log_ctx_t log_ctx,
                              char *topic,
                              free_fnc_t topic_free,
                              void *msg,
@@ -876,7 +878,7 @@ int mqtt_ng_generate_publish(struct mqtt_ng_client *client,
                              uint16_t *packet_id)
 {
     // >> START THE RODEO <<
-    transaction_buffer_transaction_start(&client->main_buffer);
+    transaction_buffer_transaction_start(trx_buf);
 
     // Calculate the resulting message size sans fixed MQTT header
     size_t size = mqtt_ng_publish_size(topic, msg_len);
@@ -885,44 +887,44 @@ int mqtt_ng_generate_publish(struct mqtt_ng_client *client,
     struct buffer_fragment *frag = NULL;
     mqtt_msg_data mqtt_msg = NULL;
 
-    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD, frag, goto fail_rollback );
+    BUFFER_TRANSACTION_NEW_FRAG(&trx_buf->state, BUFFER_FRAG_MQTT_PACKET_HEAD, frag, goto fail_rollback );
     mqtt_msg = frag;
 
     // MQTT Fixed Header
     size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + size - msg_len;
-    CHECK_BYTES_AVAILABLE(&client->main_buffer.state, needed_bytes, goto fail_rollback);
+    CHECK_BYTES_AVAILABLE(&trx_buf->state, needed_bytes, goto fail_rollback);
 
     *WRITE_POS(frag) = (MQTT_CPT_PUBLISH << 4) | (publish_flags & 0xF);
-    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
-    DATA_ADVANCE(&client->main_buffer.state, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
+    DATA_ADVANCE(&trx_buf->state, 1, frag);
+    DATA_ADVANCE(&trx_buf->state, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
 
     // MQTT Variable Header
     // [MQTT-3.3.2.1]
-    PACK_2B_INT(&client->main_buffer.state, strlen(topic), frag);
-    if (_optimized_add(&client->main_buffer.state, client->log, topic, strlen(topic), topic_free, &frag))
+    PACK_2B_INT(&trx_buf->state, strlen(topic), frag);
+    if (_optimized_add(&trx_buf->state, log_ctx, topic, strlen(topic), topic_free, &frag))
         goto fail_rollback;
-    BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
+    BUFFER_TRANSACTION_NEW_FRAG(&trx_buf->state, 0, frag, goto fail_rollback);
 
     // [MQTT-3.3.2.2]
     mqtt_msg->packet_id = get_unused_packet_id();
     *packet_id = mqtt_msg->packet_id;
-    PACK_2B_INT(&client->main_buffer.state, mqtt_msg->packet_id, frag);
+    PACK_2B_INT(&trx_buf->state, mqtt_msg->packet_id, frag);
 
     // [MQTT-3.3.2.3.1] TODO Property Length for now fixed 0
     *WRITE_POS(frag) = 0;
-    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
+    DATA_ADVANCE(&trx_buf->state, 1, frag);
 
-    if( (frag = buffer_new_frag(&client->main_buffer.state, BUFFER_FRAG_DATA_EXTERNAL)) == NULL )
+    if( (frag = buffer_new_frag(&trx_buf->state, BUFFER_FRAG_DATA_EXTERNAL)) == NULL )
         goto fail_rollback;
 
-    if (frag_set_external_data(client->log, frag, msg, msg_len, msg_free))
+    if (frag_set_external_data(log_ctx, frag, msg, msg_len, msg_free))
         goto fail_rollback;
 
-    client->main_buffer.state.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
-    transaction_buffer_transaction_commit(&client->main_buffer);
+    trx_buf->state.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
+    transaction_buffer_transaction_commit(trx_buf);
     return MQTT_NG_MSGGEN_OK;
 fail_rollback:
-    transaction_buffer_transaction_rollback(&client->main_buffer, mqtt_msg);
+    transaction_buffer_transaction_rollback(trx_buf, mqtt_msg);
     return MQTT_NG_MSGGEN_BUFFER_OOM;
 }
 
@@ -935,7 +937,7 @@ int mqtt_ng_publish(struct mqtt_ng_client *client,
                     uint8_t publish_flags,
                     uint16_t *packet_id)
 {
-    TRY_GENERATE_MESSAGE(mqtt_ng_generate_publish, client, topic, topic_free, msg, msg_free, msg_len, publish_flags, packet_id);
+    TRY_GENERATE_MESSAGE(mqtt_ng_generate_publish, &client->main_buffer, client->log, topic, topic_free, msg, msg_free, msg_len, publish_flags, packet_id);
 }
 
 static inline size_t mqtt_ng_subscribe_size(struct mqtt_sub *subs, size_t sub_count)
@@ -949,10 +951,10 @@ static inline size_t mqtt_ng_subscribe_size(struct mqtt_sub *subs, size_t sub_co
     return len;
 }
 
-int mqtt_ng_generate_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subs, size_t sub_count)
+int mqtt_ng_generate_subscribe(struct transaction_buffer *trx_buf, mqtt_wss_log_ctx_t log_ctx, struct mqtt_sub *subs, size_t sub_count)
 {
     // >> START THE RODEO <<
-    transaction_buffer_transaction_start(&client->main_buffer);
+    transaction_buffer_transaction_start(trx_buf);
 
     // Calculate the resulting message size sans fixed MQTT header
     size_t size = mqtt_ng_subscribe_size(subs, sub_count);
@@ -961,53 +963,54 @@ int mqtt_ng_generate_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *s
     struct buffer_fragment *frag = NULL;
     mqtt_msg_data ret = NULL;
 
-    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD, frag, goto fail_rollback);
+    BUFFER_TRANSACTION_NEW_FRAG(&trx_buf->state, BUFFER_FRAG_MQTT_PACKET_HEAD, frag, goto fail_rollback);
     ret = frag;
 
     // MQTT Fixed Header
     size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + 3 /*Packet ID + Property Length*/;
-    CHECK_BYTES_AVAILABLE(&client->main_buffer.state, needed_bytes, goto fail_rollback);
+    CHECK_BYTES_AVAILABLE(&trx_buf->state, needed_bytes, goto fail_rollback);
 
     *WRITE_POS(frag) = (MQTT_CPT_SUBSCRIBE << 4) | 0x2 /* [MQTT-3.8.1-1] */;
-    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
-    DATA_ADVANCE(&client->main_buffer.state, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
+    DATA_ADVANCE(&trx_buf->state, 1, frag);
+    DATA_ADVANCE(&trx_buf->state, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
 
     // MQTT Variable Header
     // [MQTT-3.8.2] PacketID
     ret->packet_id = get_unused_packet_id();
-    PACK_2B_INT(&client->main_buffer.state, ret->packet_id, frag);
+    PACK_2B_INT(&trx_buf->state, ret->packet_id, frag);
 
     // [MQTT-3.8.2.1.1] Property Length // TODO for now fixed 0
     *WRITE_POS(frag) = 0;
-    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
+    DATA_ADVANCE(&trx_buf->state, 1, frag);
 
     for (size_t i = 0; i < sub_count; i++) {
-        BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
-        PACK_2B_INT(&client->main_buffer.state, strlen(subs[i].topic), frag);
-        if (_optimized_add(&client->main_buffer.state, client->log, subs[i].topic, strlen(subs[i].topic), subs[i].topic_free, &frag))
+        BUFFER_TRANSACTION_NEW_FRAG(&trx_buf->state, 0, frag, goto fail_rollback);
+        PACK_2B_INT(&trx_buf->state, strlen(subs[i].topic), frag);
+        if (_optimized_add(&trx_buf->state, log_ctx, subs[i].topic, strlen(subs[i].topic), subs[i].topic_free, &frag))
             goto fail_rollback;
-        BUFFER_TRANSACTION_NEW_FRAG(client, 0, frag, goto fail_rollback);
+        BUFFER_TRANSACTION_NEW_FRAG(&trx_buf->state, 0, frag, goto fail_rollback);
         *WRITE_POS(frag) = subs[i].options;
-        DATA_ADVANCE(&client->main_buffer.state, 1, frag);
+        DATA_ADVANCE(&trx_buf->state, 1, frag);
     }
 
-    client->main_buffer.state.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
-    transaction_buffer_transaction_commit(&client->main_buffer);
+    trx_buf->state.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
+    transaction_buffer_transaction_commit(trx_buf);
     return MQTT_NG_MSGGEN_OK;
 fail_rollback:
-    transaction_buffer_transaction_rollback(&client->main_buffer, ret);
+    transaction_buffer_transaction_rollback(trx_buf, ret);
     return MQTT_NG_MSGGEN_BUFFER_OOM;
 }
 
 int mqtt_ng_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subs, size_t sub_count)
 {
-    TRY_GENERATE_MESSAGE(mqtt_ng_generate_subscribe, client, subs, sub_count);
+    TRY_GENERATE_MESSAGE(mqtt_ng_generate_subscribe, &client->main_buffer, client->log, subs, sub_count);
 }
 
-int mqtt_ng_generate_disconnect(struct mqtt_ng_client *client, uint8_t reason_code)
+int mqtt_ng_generate_disconnect(struct transaction_buffer *trx_buf, mqtt_wss_log_ctx_t log_ctx, uint8_t reason_code)
 {
+    (void) log_ctx;
     // >> START THE RODEO <<
-    transaction_buffer_transaction_start(&client->main_buffer);
+    transaction_buffer_transaction_start(trx_buf);
 
     // Calculate the resulting message size sans fixed MQTT header
     size_t size = reason_code ? 1 : 0;
@@ -1016,41 +1019,42 @@ int mqtt_ng_generate_disconnect(struct mqtt_ng_client *client, uint8_t reason_co
     struct buffer_fragment *frag = NULL;
     mqtt_msg_data ret = NULL;
 
-    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD, frag, goto fail_rollback);
+    BUFFER_TRANSACTION_NEW_FRAG(&trx_buf->state, BUFFER_FRAG_MQTT_PACKET_HEAD, frag, goto fail_rollback);
     ret = frag;
 
     // MQTT Fixed Header
     size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + (reason_code ? 1 : 0);
-    CHECK_BYTES_AVAILABLE(&client->main_buffer.state, needed_bytes, goto fail_rollback);
+    CHECK_BYTES_AVAILABLE(&trx_buf->state, needed_bytes, goto fail_rollback);
 
     *WRITE_POS(frag) = MQTT_CPT_DISCONNECT << 4;
-    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
-    DATA_ADVANCE(&client->main_buffer.state, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
+    DATA_ADVANCE(&trx_buf->state, 1, frag);
+    DATA_ADVANCE(&trx_buf->state, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
 
     if (reason_code) {
         // MQTT Variable Header
         // [MQTT-3.14.2.1] PacketID
         *WRITE_POS(frag) = reason_code;
-        DATA_ADVANCE(&client->main_buffer.state, 1, frag);
+        DATA_ADVANCE(&trx_buf->state, 1, frag);
     }
 
-    client->main_buffer.state.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
-    transaction_buffer_transaction_commit(&client->main_buffer);
+    trx_buf->state.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
+    transaction_buffer_transaction_commit(trx_buf);
     return MQTT_NG_MSGGEN_OK;
 fail_rollback:
-    transaction_buffer_transaction_rollback(&client->main_buffer, ret);
+    transaction_buffer_transaction_rollback(trx_buf, ret);
     return MQTT_NG_MSGGEN_BUFFER_OOM;
 }
 
 int mqtt_ng_disconnect(struct mqtt_ng_client *client, uint8_t reason_code)
 {
-    TRY_GENERATE_MESSAGE(mqtt_ng_generate_disconnect, client, reason_code);
+    TRY_GENERATE_MESSAGE(mqtt_ng_generate_disconnect, &client->main_buffer, client->log, reason_code);
 }
 
-static int mqtt_generate_puback(struct mqtt_ng_client *client, uint16_t packet_id, uint8_t reason_code)
+static int mqtt_generate_puback(struct transaction_buffer *trx_buf, mqtt_wss_log_ctx_t log_ctx, uint16_t packet_id, uint8_t reason_code)
 {
+    (void) log_ctx;
     // >> START THE RODEO <<
-    transaction_buffer_transaction_start(&client->main_buffer);
+    transaction_buffer_transaction_start(trx_buf);
 
     // Calculate the resulting message size sans fixed MQTT header
     size_t size = 2 /* Packet ID */ + (reason_code ? 1 : 0) /* reason code */;
@@ -1058,37 +1062,37 @@ static int mqtt_generate_puback(struct mqtt_ng_client *client, uint16_t packet_i
     // Start generating the message
     struct buffer_fragment *frag = NULL;
 
-    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD | BUFFER_FRAG_GARBAGE_COLLECT_ON_SEND, frag, goto fail_rollback);
+    BUFFER_TRANSACTION_NEW_FRAG(&trx_buf->state, BUFFER_FRAG_MQTT_PACKET_HEAD | BUFFER_FRAG_GARBAGE_COLLECT_ON_SEND, frag, goto fail_rollback);
 
     // MQTT Fixed Header
     size_t needed_bytes = 1 /* Packet type */ + MQTT_VARSIZE_INT_BYTES(size) + size;
-    CHECK_BYTES_AVAILABLE(&client->main_buffer.state, needed_bytes, goto fail_rollback);
+    CHECK_BYTES_AVAILABLE(&trx_buf->state, needed_bytes, goto fail_rollback);
 
     *WRITE_POS(frag) = MQTT_CPT_PUBACK << 4;
-    DATA_ADVANCE(&client->main_buffer.state, 1, frag);
-    DATA_ADVANCE(&client->main_buffer.state, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
+    DATA_ADVANCE(&trx_buf->state, 1, frag);
+    DATA_ADVANCE(&trx_buf->state, uint32_to_mqtt_vbi(size, WRITE_POS(frag)), frag);
 
     // MQTT Variable Header
-    PACK_2B_INT(&client->main_buffer.state, packet_id, frag);
+    PACK_2B_INT(&trx_buf->state, packet_id, frag);
 
     if (reason_code) {
         // MQTT Variable Header
         // [MQTT-3.14.2.1] PacketID
         *WRITE_POS(frag) = reason_code;
-        DATA_ADVANCE(&client->main_buffer.state, 1, frag);
+        DATA_ADVANCE(&trx_buf->state, 1, frag);
     }
 
-    client->main_buffer.state.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
-    transaction_buffer_transaction_commit(&client->main_buffer);
+    trx_buf->state.tail_frag->flags |= BUFFER_FRAG_MQTT_PACKET_TAIL;
+    transaction_buffer_transaction_commit(trx_buf);
     return MQTT_NG_MSGGEN_OK;
 fail_rollback:
-    transaction_buffer_transaction_rollback(&client->main_buffer, frag);
+    transaction_buffer_transaction_rollback(trx_buf, frag);
     return MQTT_NG_MSGGEN_BUFFER_OOM;
 }
 
 static int mqtt_ng_puback(struct mqtt_ng_client *client, uint16_t packet_id, uint8_t reason_code)
 {
-    TRY_GENERATE_MESSAGE(mqtt_generate_puback, client, packet_id, reason_code);
+    TRY_GENERATE_MESSAGE(mqtt_generate_puback, &client->main_buffer, client->log, packet_id, reason_code);
 }
 
 int mqtt_ng_ping(struct mqtt_ng_client *client)
