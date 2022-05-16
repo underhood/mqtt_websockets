@@ -1080,30 +1080,6 @@ static int mqtt_ng_puback(struct mqtt_ng_client *client, uint16_t packet_id, uin
     TRY_GENERATE_MESSAGE(mqtt_generate_puback, client, packet_id, reason_code);
 }
 
-static int mqtt_generate_pingreq(struct mqtt_ng_client *client)
-{
-    // >> START THE RODEO <<
-    buffer_transaction_start(client);
-
-    // Start generating the message
-    struct buffer_fragment *frag = NULL;
-
-    BUFFER_TRANSACTION_NEW_FRAG(client, BUFFER_FRAG_MQTT_PACKET_HEAD | BUFFER_FRAG_MQTT_PACKET_TAIL | BUFFER_FRAG_GARBAGE_COLLECT_ON_SEND, frag, goto fail_rollback);
-
-    CHECK_BYTES_AVAILABLE(client, 2, goto fail_rollback);
-
-    *WRITE_POS(frag) = MQTT_CPT_PINGREQ << 4;
-    DATA_ADVANCE(1, frag);
-    *WRITE_POS(frag) = 0;
-    DATA_ADVANCE(1, frag);
-
-    buffer_transaction_commit(client);
-    return MQTT_NG_MSGGEN_OK;
-fail_rollback:
-    buffer_transaction_rollback(client, frag);
-    return MQTT_NG_MSGGEN_BUFFER_OOM;
-}
-
 int mqtt_ng_ping(struct mqtt_ng_client *client)
 {
     client->ping_pending = 1;
