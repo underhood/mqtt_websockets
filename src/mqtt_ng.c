@@ -1644,6 +1644,9 @@ int mqtt_ng_sync(struct mqtt_ng_client *client)
 {
     if (client->client_state == RAW || client->client_state == DISCONNECTED)
         return 0;
+    
+    if (client->client_state == ERROR)
+        return 1;
 
     LOCK_HDR_BUFFER(client);
     try_send_all(client);
