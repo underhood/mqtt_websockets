@@ -194,6 +194,8 @@ struct mqtt_ng_client {
 
     struct mqtt_ng_parser parser;
 
+    size_t max_mem_bytes;
+
     void (*puback_callback)(uint16_t packet_id);
     void (*connack_callback)(void* user_ctx, int connack_reply);
     void (*msg_callback)(const char *topic, const void *msg, size_t msglen, int qos);
@@ -375,6 +377,7 @@ static void buffer_frag_free_data(struct buffer_fragment *frag)
 }
 
 #define HEADER_BUFFER_SIZE 1024*1024
+#define GROWTH_FACTOR 1.25
 
 #define BUFFER_BYTES_USED(buf) ((size_t)((buf)->tail - (buf)->data))
 #define BUFFER_BYTES_AVAILABLE(buf) ((buf)->size - BUFFER_BYTES_USED(buf))
@@ -408,6 +411,22 @@ static struct buffer_fragment *buffer_new_frag(struct header_buffer *buf, buffer
     frag->flags = flags;
 
     return frag;
+}
+
+static void buffer_rebuild(struct header_buffer *buf)
+{
+    struct buffer_fragment *frag = (struct buffer_fragment*)buf->data;
+    do {
+        buf->tail = (char*)frag + sizeof(struct buffer_fragment);
+        buf->tail_frag = frag;
+        if (!(frag->flags & BUFFER_FRAG_DATA_EXTERNAL)) {
+            buf->tail_frag->data = buf->tail;
+            buf->tail += frag->len;
+        }
+        if (frag->next != NULL)
+            frag->next = (struct buffer_fragment*)buf->tail;
+        frag = frag->next;
+    } while(frag);
 }
 
 static void buffer_garbage_collect(struct header_buffer *buf, mqtt_wss_log_ctx_t log_ctx)
@@ -444,18 +463,29 @@ static void buffer_garbage_collect(struct header_buffer *buf, mqtt_wss_log_ctx_t
 #endif
 
     memmove(buf->data, frag, buf->tail - (char*)frag);
-    frag = (struct buffer_fragment*)buf->data;
-    do {
-        buf->tail = (char*)frag + sizeof(struct buffer_fragment);
-        buf->tail_frag = frag;
-        if (!(frag->flags & BUFFER_FRAG_DATA_EXTERNAL)) {
-            buf->tail_frag->data = buf->tail;
-            buf->tail += frag->len;
-        }
-        if (frag->next != NULL)
-            frag->next = (struct buffer_fragment*)buf->tail;
-        frag = frag->next;
-    } while(frag);
+    buffer_rebuild(buf);
+}
+
+static int buffer_grow(struct header_buffer *buf, mqtt_wss_log_ctx_t log_ctx, float rate, size_t max)
+{
+    if (buf->size >= max)
+        return 0;
+
+    buf->size *= rate;
+    if (buf->size > max)
+        buf->size = max;
+
+    void *ret = realloc(buf->data, buf->size);
+    if (ret == NULL) {
+        mws_warn(log_ctx, "Buffer growth failed (realloc)");
+        return 1;
+    }
+
+    mws_debug(log_ctx, "Message metadata buffer was grown");
+
+    buf->data = ret;
+    buffer_rebuild(buf);
+    return 0;
 }
 
 inline static int transaction_buffer_init(struct transaction_buffer *to_init, size_t size)
@@ -662,13 +692,19 @@ static int _optimized_add(struct header_buffer *buf, mqtt_wss_log_ctx_t log_ctx,
     return 0;
 }
 
-#define TRY_GENERATE_MESSAGE(generator_function, buf, log_ctx, ...) \
+#define TRY_GENERATE_MESSAGE(generator_function, buf, log_ctx, max_mem, ...) \
     int rc = generator_function(buf, log_ctx, ##__VA_ARGS__); \
     if (rc == MQTT_NG_MSGGEN_BUFFER_OOM) { \
         LOCK_HDR_BUFFER(buf); \
         buffer_garbage_collect(&((buf)->hdr_buffer), log_ctx); \
         UNLOCK_HDR_BUFFER(buf); \
         rc = generator_function(buf, log_ctx, ##__VA_ARGS__); \
+        if (rc == MQTT_NG_MSGGEN_BUFFER_OOM && max_mem) { \
+            LOCK_HDR_BUFFER(buf); \
+            buffer_grow(&((buf)->hdr_buffer), log_ctx, GROWTH_FACTOR, max_mem); \
+            UNLOCK_HDR_BUFFER(buf); \
+            rc = generator_function(buf, log_ctx, ##__VA_ARGS__); \
+        } \
         if (rc == MQTT_NG_MSGGEN_BUFFER_OOM) \
             mws_error(log_ctx, "%s failed to generate message due to insufficient buffer space (line %d)", __FUNCTION__, __LINE__); \
     } \
@@ -937,7 +973,7 @@ int mqtt_ng_publish(struct mqtt_ng_client *client,
                     uint8_t publish_flags,
                     uint16_t *packet_id)
 {
-    TRY_GENERATE_MESSAGE(mqtt_ng_generate_publish, &client->main_buffer, client->log, topic, topic_free, msg, msg_free, msg_len, publish_flags, packet_id);
+    TRY_GENERATE_MESSAGE(mqtt_ng_generate_publish, &client->main_buffer, client->log, client->max_mem_bytes, topic, topic_free, msg, msg_free, msg_len, publish_flags, packet_id);
 }
 
 static inline size_t mqtt_ng_subscribe_size(struct mqtt_sub *subs, size_t sub_count)
@@ -1003,7 +1039,7 @@ fail_rollback:
 
 int mqtt_ng_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subs, size_t sub_count)
 {
-    TRY_GENERATE_MESSAGE(mqtt_ng_generate_subscribe, &client->main_buffer, client->log, subs, sub_count);
+    TRY_GENERATE_MESSAGE(mqtt_ng_generate_subscribe, &client->main_buffer, client->log, client->max_mem_bytes, subs, sub_count);
 }
 
 int mqtt_ng_generate_disconnect(struct transaction_buffer *trx_buf, mqtt_wss_log_ctx_t log_ctx, uint8_t reason_code)
@@ -1047,7 +1083,7 @@ fail_rollback:
 
 int mqtt_ng_disconnect(struct mqtt_ng_client *client, uint8_t reason_code)
 {
-    TRY_GENERATE_MESSAGE(mqtt_ng_generate_disconnect, &client->main_buffer, client->log, reason_code);
+    TRY_GENERATE_MESSAGE(mqtt_ng_generate_disconnect, &client->main_buffer, client->log, client->max_mem_bytes, reason_code);
 }
 
 static int mqtt_generate_puback(struct transaction_buffer *trx_buf, mqtt_wss_log_ctx_t log_ctx, uint16_t packet_id, uint8_t reason_code)
@@ -1092,7 +1128,7 @@ fail_rollback:
 
 static int mqtt_ng_puback(struct mqtt_ng_client *client, uint16_t packet_id, uint8_t reason_code)
 {
-    TRY_GENERATE_MESSAGE(mqtt_generate_puback, &client->main_buffer, client->log, packet_id, reason_code);
+    TRY_GENERATE_MESSAGE(mqtt_generate_puback, &client->main_buffer, client->log, client->max_mem_bytes, packet_id, reason_code);
 }
 
 int mqtt_ng_ping(struct mqtt_ng_client *client)
@@ -1687,4 +1723,9 @@ int mqtt_ng_sync(struct mqtt_ng_client *client)
 time_t mqtt_ng_last_send_time(struct mqtt_ng_client *client)
 {
     return client->time_of_last_send;
+}
+
+void mqtt_ng_set_max_mem(struct mqtt_ng_client *client, size_t bytes)
+{
+    client->max_mem_bytes = bytes;
 }

@@ -345,7 +345,10 @@ fail:
 
 void mqtt_wss_set_max_buf_size(mqtt_wss_client client, size_t size)
 {
-    client->mqtt.mqtt_c->mqtt_buf_max_size = size;
+    if (client->internal_mqtt)
+        mqtt_ng_set_max_mem(client->mqtt.mqtt_ctx, size);
+    else
+        client->mqtt.mqtt_c->mqtt_buf_max_size = size;
 }
 
 void mqtt_wss_destroy(mqtt_wss_client client)
