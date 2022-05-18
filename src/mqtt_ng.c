@@ -200,7 +200,7 @@ struct mqtt_ng_client {
     void (*connack_callback)(void* user_ctx, int connack_reply);
     void (*msg_callback)(const char *topic, const void *msg, size_t msglen, int qos);
 
-    int ping_pending:1;
+    unsigned int ping_pending:1;
 };
 
 char pingreq[] = { MQTT_CPT_PINGREQ << 4, 0x00 };
