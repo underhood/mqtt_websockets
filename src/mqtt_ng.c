@@ -68,6 +68,7 @@ struct transaction_buffer {
     // in case of error mid processing
     struct header_buffer state_backup;
     pthread_mutex_t mutex;
+    struct buffer_fragment *sending_frag;
 };
 
 enum mqtt_client_state {
@@ -188,8 +189,6 @@ struct mqtt_ng_client {
 
     // time when last fragment of MQTT message was sent
     time_t time_of_last_send;
-
-    struct buffer_fragment *sending_frag;
 
     struct mqtt_ng_parser parser;
 
@@ -434,10 +433,9 @@ static void buffer_garbage_collect(struct header_buffer *buf, mqtt_wss_log_ctx_t
     (void) log_ctx;
 #endif
 #ifdef MQTT_DEBUG_VERBOSE
-        mws_debug(log_ctx, "Garbage Collection!");
+        mws_debug(log_ctx, "Buffer Garbage Collection!");
 #endif
-    // caller responsible to lock the TRANSACTION BUFFER IF NEEDED
-    // LOCK_HDR_BUFFER(client);
+
     struct buffer_fragment *frag = BUFFER_FIRST_FRAG(buf);
     while (frag) {
         if (!frag_is_marked_for_gc(frag))
@@ -446,6 +444,13 @@ static void buffer_garbage_collect(struct header_buffer *buf, mqtt_wss_log_ctx_t
         buffer_frag_free_data(frag);
 
         frag = frag->next;
+    }
+
+    if (frag == BUFFER_FIRST_FRAG(buf)) {
+#ifdef MQTT_DEBUG_VERBOSE
+        mws_debug(log_ctx, "Buffer Garbage Collection! No Space Reclaimed!");
+#endif
+        return;
     }
 
     if (!frag) {
@@ -465,16 +470,35 @@ static void buffer_garbage_collect(struct header_buffer *buf, mqtt_wss_log_ctx_t
     buffer_rebuild(buf);
 }
 
-static int buffer_grow(struct header_buffer *buf, mqtt_wss_log_ctx_t log_ctx, float rate, size_t max)
+static void transaction_buffer_garbage_collect(struct transaction_buffer *buf, mqtt_wss_log_ctx_t log_ctx)
 {
-    if (buf->size >= max)
+#ifdef MQTT_DEBUG_VERBOSE
+    mws_debug(log_ctx, "Transaction Buffer Garbage Collection! %s", buf->sending_frag == NULL ? "NULL" : "in flight message");
+#endif
+
+    // Invalidate the cached sending fragment
+    // as we will move data around
+    if (buf->sending_frag != &ping_frag)
+        buf->sending_frag = NULL;
+
+    buffer_garbage_collect(&buf->hdr_buffer, log_ctx);
+}
+
+static int transaction_buffer_grow(struct transaction_buffer *buf, mqtt_wss_log_ctx_t log_ctx, float rate, size_t max)
+{
+    if (buf->hdr_buffer.size >= max)
         return 0;
 
-    buf->size *= rate;
-    if (buf->size > max)
-        buf->size = max;
+    // Invalidate the cached sending fragment
+    // as we will move data around
+    if (buf->sending_frag != &ping_frag)
+        buf->sending_frag = NULL;
 
-    void *ret = realloc(buf->data, buf->size);
+    buf->hdr_buffer.size *= rate;
+    if (buf->hdr_buffer.size > max)
+        buf->hdr_buffer.size = max;
+
+    void *ret = realloc(buf->hdr_buffer.data, buf->hdr_buffer.size);
     if (ret == NULL) {
         mws_warn(log_ctx, "Buffer growth failed (realloc)");
         return 1;
@@ -482,8 +506,8 @@ static int buffer_grow(struct header_buffer *buf, mqtt_wss_log_ctx_t log_ctx, fl
 
     mws_debug(log_ctx, "Message metadata buffer was grown");
 
-    buf->data = ret;
-    buffer_rebuild(buf);
+    buf->hdr_buffer.data = ret;
+    buffer_rebuild(&buf->hdr_buffer);
     return 0;
 }
 
@@ -695,12 +719,12 @@ static int _optimized_add(struct header_buffer *buf, mqtt_wss_log_ctx_t log_ctx,
     int rc = generator_function(buf, log_ctx, ##__VA_ARGS__); \
     if (rc == MQTT_NG_MSGGEN_BUFFER_OOM) { \
         LOCK_HDR_BUFFER(buf); \
-        buffer_garbage_collect(&((buf)->hdr_buffer), log_ctx); \
+        transaction_buffer_garbage_collect((buf), log_ctx); \
         UNLOCK_HDR_BUFFER(buf); \
         rc = generator_function(buf, log_ctx, ##__VA_ARGS__); \
         if (rc == MQTT_NG_MSGGEN_BUFFER_OOM && max_mem) { \
             LOCK_HDR_BUFFER(buf); \
-            buffer_grow(&((buf)->hdr_buffer), log_ctx, GROWTH_FACTOR, max_mem); \
+            transaction_buffer_grow((buf), log_ctx, GROWTH_FACTOR, max_mem); \
             UNLOCK_HDR_BUFFER(buf); \
             rc = generator_function(buf, log_ctx, ##__VA_ARGS__); \
         } \
@@ -1505,7 +1529,7 @@ static int parse_data(struct mqtt_ng_client *client)
 // return 0 if there is fragment set
 static int mqtt_ng_next_to_send(struct mqtt_ng_client *client) {
     if (client->client_state == CONNECT_PENDING) {
-        client->sending_frag = client->connect_msg;
+        client->main_buffer.sending_frag = client->connect_msg;
         client->client_state = CONNECTING;
         return 0;
     }
@@ -1522,11 +1546,11 @@ static int mqtt_ng_next_to_send(struct mqtt_ng_client *client) {
     if ( client->ping_pending && (!frag || (frag->flags & BUFFER_FRAG_MQTT_PACKET_HEAD && frag->sent == 0)) ) {
         client->ping_pending = 0;
         ping_frag.sent = 0;
-        client->sending_frag = &ping_frag;
+        client->main_buffer.sending_frag = &ping_frag;
         return 0;
     }
 
-    client->sending_frag = frag;
+    client->main_buffer.sending_frag = frag;
     return frag == NULL ? 1 : 0;
 }
 
@@ -1536,7 +1560,7 @@ static int mqtt_ng_next_to_send(struct mqtt_ng_client *client) {
 // nothing could be written anymore
 // return 1 if last fragment of a message was fully sent
 static int send_fragment(struct mqtt_ng_client *client) {
-    struct buffer_fragment *frag = client->sending_frag;
+    struct buffer_fragment *frag = client->main_buffer.sending_frag;
 
     // for readability
     char *ptr = frag->data + frag->sent;
@@ -1555,11 +1579,11 @@ static int send_fragment(struct mqtt_ng_client *client) {
 
     if (frag->flags & BUFFER_FRAG_MQTT_PACKET_TAIL) {
         client->time_of_last_send = time(NULL);
-        client->sending_frag = NULL;
+        client->main_buffer.sending_frag = NULL;
         return 1;
     }
 
-    client->sending_frag = frag->next;
+    client->main_buffer.sending_frag = frag->next;
     
     return 0;
 }
@@ -1573,7 +1597,7 @@ static int send_all_message_fragments(struct mqtt_ng_client *client) {
 
 static void try_send_all(struct mqtt_ng_client *client) {
     do {
-        if (client->sending_frag == NULL && mqtt_ng_next_to_send(client))
+        if (client->main_buffer.sending_frag == NULL && mqtt_ng_next_to_send(client))
             return;
     } while(send_all_message_fragments(client) >= 0);
 }
