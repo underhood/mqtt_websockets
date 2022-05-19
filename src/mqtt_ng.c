@@ -890,16 +890,15 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
                     uint16_t keep_alive)
 {
     client->client_state = RAW;
-/*  // this had issue when connection was dropped on network layer
-    // mqtt client has no way of knowing about it yet
-    // I might reconsider allowing this in future 
-    if (client->client_state != RAW) {
-        ERROR("Cannot connect already connected (or connecting) client");
-        return 1;
-    }*/
+    client->parser.state = MQTT_PARSE_FIXED_HEADER_PACKET_TYPE;
+
+    LOCK_HDR_BUFFER(&client->main_buffer);
+    client->main_buffer.sending_frag = NULL;
 
     if (clean_start)
         buffer_purge(&client->main_buffer.hdr_buffer);
+
+    UNLOCK_HDR_BUFFER(&client->main_buffer);
 
     client->connect_msg = mqtt_ng_generate_connect(&client->main_buffer, client->log, auth, lwt, clean_start, keep_alive);
     if (client->connect_msg == NULL) {
