@@ -1499,7 +1499,7 @@ static int parse_data(struct mqtt_ng_client *client)
     return MQTT_NG_CLIENT_OK_CALL_AGAIN;
 }
 
-// set next MQTT message to send (pointer to first fragment)
+// set next MQTT fragment to send
 // return 1 if nothing to send
 // return -1 on error
 // return 0 if there is fragment set
@@ -1521,7 +1521,7 @@ static int mqtt_ng_next_to_send(struct mqtt_ng_client *client) {
 
     struct buffer_fragment *frag = BUFFER_FIRST_FRAG(&client->main_buffer.hdr_buffer);
     while (frag) {
-        if ( (frag->flags & BUFFER_FRAG_MQTT_PACKET_HEAD) && !frag->sent ) {
+        if ( frag->sent != frag->len ) {
             client->sending_frag = frag;
             return 0;
         }
