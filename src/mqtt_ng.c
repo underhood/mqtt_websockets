@@ -190,7 +190,6 @@ struct mqtt_ng_client {
     time_t time_of_last_send;
 
     struct buffer_fragment *sending_frag;
-    struct buffer_fragment *sending_msg;
 
     struct mqtt_ng_parser parser;
 
@@ -1517,14 +1516,13 @@ static int mqtt_ng_next_to_send(struct mqtt_ng_client *client) {
         client->ping_pending = 0;
         ping_frag.sent = 0;
         client->sending_frag = &ping_frag;
-        client->sending_msg = &ping_frag;
         return 0;
     }
 
     struct buffer_fragment *frag = BUFFER_FIRST_FRAG(&client->main_buffer.hdr_buffer);
     while (frag) {
         if ( (frag->flags & BUFFER_FRAG_MQTT_PACKET_HEAD) && !frag->sent ) {
-            client->sending_frag = client->sending_msg = frag;
+            client->sending_frag = frag;
             return 0;
         }
         frag = frag->next;
