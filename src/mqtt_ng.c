@@ -1512,22 +1512,22 @@ static int mqtt_ng_next_to_send(struct mqtt_ng_client *client) {
     if (client->client_state != CONNECTED)
         return -1;
 
-    if (client->ping_pending) {
+    struct buffer_fragment *frag = BUFFER_FIRST_FRAG(&client->main_buffer.hdr_buffer);
+    while (frag) {
+        if ( frag->sent != frag->len )
+            break;
+        frag = frag->next;
+    }
+
+    if ( client->ping_pending && (!frag || (frag->flags & BUFFER_FRAG_MQTT_PACKET_HEAD && frag->sent == 0)) ) {
         client->ping_pending = 0;
         ping_frag.sent = 0;
         client->sending_frag = &ping_frag;
         return 0;
     }
 
-    struct buffer_fragment *frag = BUFFER_FIRST_FRAG(&client->main_buffer.hdr_buffer);
-    while (frag) {
-        if ( frag->sent != frag->len ) {
-            client->sending_frag = frag;
-            return 0;
-        }
-        frag = frag->next;
-    }
-    return 1;
+    client->sending_frag = frag;
+    return frag == NULL ? 1 : 0;
 }
 
 // send current fragment
@@ -1591,19 +1591,23 @@ static inline void mark_message_for_gc(struct buffer_fragment *frag)
 
 static int mark_packet_acked(struct mqtt_ng_client *client, uint16_t packet_id)
 {
+    LOCK_HDR_BUFFER(&client->main_buffer);
     struct buffer_fragment *frag = BUFFER_FIRST_FRAG(&client->main_buffer.hdr_buffer);
     while (frag) {
         if ( (frag->flags & BUFFER_FRAG_MQTT_PACKET_HEAD) && frag->packet_id == packet_id) {
             if (!frag->sent) {
                 ERROR("Received packet_id (%" PRIu16 ") belongs to MQTT packet which was not yet sent!", packet_id);
+                UNLOCK_HDR_BUFFER(&client->main_buffer);
                 return 1;
             }
             mark_message_for_gc(frag);
+            UNLOCK_HDR_BUFFER(&client->main_buffer);
             return 0;
         }
         frag = frag->next;
     }
     ERROR("Received packet_id (%" PRIu16 ") is unknown!", packet_id);
+    UNLOCK_HDR_BUFFER(&client->main_buffer);
     return 1;
 }
 
@@ -1621,7 +1625,9 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
 #ifdef MQTT_DEBUG_VERBOSE
                 DEBUG("Received CONNACK");
 #endif
+                LOCK_HDR_BUFFER(&client->main_buffer);
                 mark_message_for_gc(client->connect_msg);
+                UNLOCK_HDR_BUFFER(&client->main_buffer);
                 client->connect_msg = NULL;
                 if (client->client_state != CONNECTING) {
                     ERROR("Received unexpected CONNACK");
