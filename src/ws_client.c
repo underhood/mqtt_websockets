@@ -74,7 +74,7 @@ ws_client *ws_client_new(size_t buf_size, char **host, mqtt_wss_log_ctx_t log)
 
     client->entropy_fd = open(ENTROPY_SOURCE, O_RDONLY);
     if (client->entropy_fd < 1) {
-        ERROR("Error opening entropy source \"" ENTROPY_SOURCE "\". Reason: \"%s\"", strerror(errno));
+        ERROR("Error opening entropy source \"" ENTROPY_SOURCE "\". Reason: \"[%s]\"", strerror(errno));
         goto cleanup_3;
     }
 
@@ -142,10 +142,11 @@ int ws_client_add_http_header(ws_client *client, struct http_header *hdr)
         return -1;
     }
 
-    if (client->hs.headers)
+    if (client->hs.headers) {
         client->hs.headers_tail->next = hdr;
-    else
+    } else {
         client->hs.headers = hdr;
+    }
 
     client->hs.headers_tail = hdr;
     client->hs.hdr_count++;
@@ -161,12 +162,13 @@ int ws_client_want_write(ws_client *client)
 #define RAND_SRC "/dev/urandom"
 static int ws_client_get_nonce(ws_client *client, char *dest, unsigned int size)
 {
-    // we do not need crypto secure random here
-    // it's just used for protocol negotiation
+    /* we do not need crypto secure random here
+     * it's just used for protocol negotiation
+     */
     int rd;
     int f = open(RAND_SRC, O_RDONLY);
     if (f < 0) {
-        ERROR("Error opening \"%s\". Err: \"%s\"", RAND_SRC, strerror(errno));
+        ERROR("Error opening \"%s\". Err: \"[%s]\"", RAND_SRC, strerror(errno));
         return -2;
     }
 
@@ -278,11 +280,11 @@ int ws_client_start_handshake(ws_client *client)
 #error "Buffer too small"
 #endif
 
-#define HTTP_HDR_LINE_CHECK_LIMIT(x) if ((x) >= MAX_HTTP_LINE_LENGTH) \
-{ \
-    ERROR("HTTP line received is too long. Maximum is %d", MAX_HTTP_LINE_LENGTH); \
-    return WS_CLIENT_PROTOCOL_ERROR; \
-}
+#define HTTP_HDR_LINE_CHECK_LIMIT(x)                                                                                    \
+    if ((x) >= MAX_HTTP_LINE_LENGTH) {                                                                                  \
+        ERROR("HTTP line received is too long. Maximum is %d", MAX_HTTP_LINE_LENGTH);                                   \
+        return WS_CLIENT_PROTOCOL_ERROR;                                                                                \
+    }
 
 int ws_client_parse_handshake_resp(ws_client *client)
 {
