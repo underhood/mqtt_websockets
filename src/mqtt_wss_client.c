@@ -1079,7 +1079,7 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
     long long int till_next_keep_alive = t_till_next_keepalive_ms(client);
     if (client->mqtt_connected && (timeout_ms < 0 || timeout_ms >= till_next_keep_alive)) {
         #ifdef DEBUG_ULTRA_VERBOSE
-            mws_debug(client->log, "Shortening Timeout requested %d to %ld to ensure keep-alive can be sent", timeout_ms, till_next_keep_alive);
+            mws_debug(client->log, "Shortening Timeout requested %d to %lld to ensure keep-alive can be sent", timeout_ms, till_next_keep_alive);
         #endif
         timeout_ms = till_next_keep_alive;
         send_keepalive = 1;
