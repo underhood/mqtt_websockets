@@ -20,4 +20,14 @@
 
 #include "endian_compat.h"
 
+#ifdef MQTT_WSS_CUSTOM_ALLOC
+#include "mqtt_wss_pal.h"
+#else
+#define mw_malloc(...) malloc(__VA_ARGS__)
+#define mw_calloc(...) calloc(__VA_ARGS__)
+#define mw_free(...) free(__VA_ARGS__)
+#define mw_strdup(...) strdup(__VA_ARGS__)
+#define mw_realloc(...) realloc(__VA_ARGS__)
+#endif
+
 #endif /* COMMON_INTERNAL_H */
