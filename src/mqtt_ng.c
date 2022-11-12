@@ -652,7 +652,7 @@ static size_t mqtt_ng_connect_size(struct mqtt_auth_properties *auth,
         + sizeof(mqtt_protocol_name_frag) /* Proto Name and Version */
         + 1 /* Connect Flags */
         + 2 /* Keep Alive */
-        + 1 /* 3.1.2.11.1 Property Length - for now 0, TODO TODO*/;
+        + 4 /* 3.1.2.11.1 Property Length - for now fixed to only Topic Alias Maximum, TODO TODO*/;
 
     // CONNECT payload. 3.1.3
     if (auth->client_id)
@@ -841,9 +841,12 @@ mqtt_msg_data mqtt_ng_generate_connect(struct transaction_buffer *trx_buf,
 
     PACK_2B_INT(&trx_buf->hdr_buffer, keep_alive, frag);
 
-    // TODO Property Length [MQTT-3.1.3.2.1] temporary fixed 0
-    *WRITE_POS(frag) = 0;
+    // TODO Property Length [MQTT-3.1.3.2.1] temporary fixed to 3 (one property topic alias max)
+    DATA_ADVANCE(&trx_buf->hdr_buffer, uint32_to_mqtt_vbi(3, WRITE_POS(frag)), frag);
+    *WRITE_POS(frag) = MQTT_PROP_TOPIC_ALIAS_MAX;
     DATA_ADVANCE(&trx_buf->hdr_buffer, 1, frag);
+
+    PACK_2B_INT(&trx_buf->hdr_buffer, 65535, frag);
 
     // [MQTT-3.1.3.1] Client identifier
     CHECK_BYTES_AVAILABLE(&trx_buf->hdr_buffer, 2, goto fail_rollback);
