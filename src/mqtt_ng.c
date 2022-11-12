@@ -103,20 +103,42 @@ struct mqtt_vbi_parser_ctx {
     uint32_t result;
 };
 
+enum mqtt_datatype {
+    MQTT_TYPE_UNKNOWN = 0,
+    MQTT_TYPE_UINT_8,
+    MQTT_TYPE_UINT_16,
+    MQTT_TYPE_UINT_32,
+    MQTT_TYPE_VBI,
+    MQTT_TYPE_STR,
+    MQTT_TYPE_BIN
+};
+
 struct mqtt_property {
-    uint32_t id;
+    uint8_t id;
+    enum mqtt_datatype type;
+    union {
+        char *string;
+        uint8_t uint8;
+        uint16_t uint16;
+        uint32_t uint32;
+    } data;
     struct mqtt_property *next;
 };
 
 enum mqtt_properties_parser_state {
     PROPERTIES_LENGTH = 0,
-    PROPERTY_ID
+    PROPERTY_CREATE,
+    PROPERTY_ID,
+    PROPERTY_TYPE_UINT16,
+    PROPERTY_NEXT
 };
 
 struct mqtt_properties_parser_ctx {
     enum mqtt_properties_parser_state state;
     struct mqtt_property *head;
+    struct mqtt_property *tail;
     uint32_t properties_length;
+    uint32_t vbi_length;
     struct mqtt_vbi_parser_ctx vbi_parser_ctx;
     size_t bytes_consumed;
 };
@@ -1242,6 +1264,26 @@ static void mqtt_properties_parser_ctx_reset(struct mqtt_properties_parser_ctx *
     vbi_parser_reset_ctx(&ctx->vbi_parser_ctx);
 }
 
+struct mqtt_property_type {
+    uint8_t id;
+    enum mqtt_datatype datatype;
+    const char* name;
+};
+
+const struct mqtt_property_type mqtt_property_types[] = {
+    { .id = MQTT_PROP_TOPIC_ALIAS_MAX, .name = MQTT_PROP_TOPIC_ALIAS_MAX_NAME, .datatype = MQTT_TYPE_UINT_16 },
+    { .id = MQTT_PROP_RECEIVE_MAX,     .name = MQTT_PROP_RECEIVE_MAX_NAME,     .datatype = MQTT_TYPE_UINT_16 },
+    { .id = 0,                         .name = NULL,                           .datatype = MQTT_TYPE_UNKNOWN }
+};
+
+static int get_property_type_by_id(uint8_t property_id) {
+    for (int i = 0; mqtt_property_types[i].datatype != MQTT_TYPE_UNKNOWN; i++) {
+        if (mqtt_property_types[i].id == property_id)
+            return mqtt_property_types[i].datatype;
+    }
+    return MQTT_TYPE_UNKNOWN;
+}
+
 // Parses [MQTT-2.2.2]
 static int parse_properties_array(struct mqtt_properties_parser_ctx *ctx, rbuf_t data, mqtt_wss_log_ctx_t log)
 {
@@ -1252,19 +1294,52 @@ static int parse_properties_array(struct mqtt_properties_parser_ctx *ctx, rbuf_t
             if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
                 ctx->properties_length = ctx->vbi_parser_ctx.result;
                 ctx->bytes_consumed += ctx->vbi_parser_ctx.bytes;
+                ctx->vbi_length = ctx->vbi_parser_ctx.bytes;
                 if (!ctx->properties_length)
                     return MQTT_NG_CLIENT_PARSE_DONE;
-                ctx->state = PROPERTY_ID;
+                ctx->state = PROPERTY_CREATE;
                 vbi_parser_reset_ctx(&ctx->vbi_parser_ctx);
                 break;
             }
             return rc;
+        case PROPERTY_CREATE:
+            BUF_READ_CHECK_AT_LEAST(data, 1);
+            struct mqtt_property *prop = mw_calloc(1, sizeof(struct mqtt_property));
+            if (ctx->head == NULL) {
+                ctx->head = prop;
+                ctx->tail = prop;
+            } else {
+                ctx->tail->next = prop;
+                ctx->tail = ctx->tail->next;
+            }
+            ctx->state = PROPERTY_ID;
+            /* FALLTHROUGH */
         case PROPERTY_ID:
-            // TODO ignore for now... just skip
-            rbuf_bump_tail(data, ctx->properties_length);
-            ctx->bytes_consumed += ctx->properties_length;
+            rbuf_pop(data, (char*)&ctx->tail->id, 1);
+            ctx->bytes_consumed += 1;
+            ctx->tail->type = get_property_type_by_id(ctx->tail->id);
+            switch (ctx->tail->type) {
+                case MQTT_TYPE_UINT_16:
+                    ctx->state = PROPERTY_TYPE_UINT16;
+                    break;
+                default:
+                    mws_error(log, "Unsupported property type %d.", (int)ctx->tail->type);
+                    return MQTT_NG_CLIENT_PROTOCOL_ERROR;
+            }
+            break;
+        case PROPERTY_TYPE_UINT16:
+            BUF_READ_CHECK_AT_LEAST(data, 2);
+            rbuf_pop(data, (char*)&ctx->tail->data.uint16, sizeof(uint16_t));
+            ctx->tail->data.uint16 = be16toh(ctx->tail->data.uint16);
+            ctx->bytes_consumed += sizeof(uint16_t);
+            ctx->state = PROPERTY_NEXT;
+            /* FALLTHROUGH */
+        case PROPERTY_NEXT:
+            if (ctx->properties_length > ctx->bytes_consumed - ctx->vbi_length) {
+                ctx->state = PROPERTY_CREATE;
+                break;
+            } else
             return MQTT_NG_CLIENT_PARSE_DONE;
-//            rc = vbi_parser_parse(&ctx->vbi_parser_ctx, data, log);
     }
     return MQTT_NG_CLIENT_OK_CALL_AGAIN;
 }
