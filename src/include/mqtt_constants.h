@@ -43,6 +43,8 @@
 #define MQTT_MAX_CLIENT_ID 23 /* [MQTT-3.1.3-5] */
 
 // MQTT Property identifiers [MQTT-2.2.2.2]
+#define MQTT_PROP_TOPIC_ALIAS          0x23
+#define MQTT_PROP_TOPIC_ALIAS_NAME     "Topic Alias"
 #define MQTT_PROP_TOPIC_ALIAS_MAX      0x22 // [MQTT-3.1.2.11.5]
 #define MQTT_PROP_TOPIC_ALIAS_MAX_NAME "Topic Alias Maximum"
 #define MQTT_PROP_RECEIVE_MAX          0x21

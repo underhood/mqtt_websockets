@@ -624,6 +624,7 @@ struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings)
 
     pthread_mutex_init(&client->stats_mutex, NULL);
     client->tx_topic_aliases.stoi_dict = c_rhash_new(0);
+    client->tx_topic_aliases.idx_max = 65535;
 
     return client;
 }
@@ -986,13 +987,19 @@ uint16_t get_unused_packet_id() {
 }
 
 static inline size_t mqtt_ng_publish_size(const char *topic,
-                            size_t msg_len)
+                            size_t msg_len,
+                            uint16_t topic_id)
 {
-    return 2 /* Topic Name Length */
-        + strlen(topic)
+    size_t retval = 2 /* Topic Name Length */
+        + (topic == NULL ? 0 : strlen(topic))
         + 2 /* Packet identifier */
-        + 1 /* Properties Length TODO for now fixed 0 */
+        + 1 /* Properties Length TODO for now fixed to 1 property */
         + msg_len;
+
+    if (topic_id)
+        retval += 3;
+    
+    return retval;
 }
 
 int mqtt_ng_generate_publish(struct transaction_buffer *trx_buf,
@@ -1003,13 +1010,14 @@ int mqtt_ng_generate_publish(struct transaction_buffer *trx_buf,
                              free_fnc_t msg_free,
                              size_t msg_len,
                              uint8_t publish_flags,
-                             uint16_t *packet_id)
+                             uint16_t *packet_id,
+                             uint16_t topic_alias)
 {
     // >> START THE RODEO <<
     transaction_buffer_transaction_start(trx_buf);
 
     // Calculate the resulting message size sans fixed MQTT header
-    size_t size = mqtt_ng_publish_size(topic, msg_len);
+    size_t size = mqtt_ng_publish_size(topic, msg_len, topic_alias);
 
     // Start generating the message
     struct buffer_fragment *frag = NULL;
@@ -1032,10 +1040,12 @@ int mqtt_ng_generate_publish(struct transaction_buffer *trx_buf,
 
     // MQTT Variable Header
     // [MQTT-3.3.2.1]
-    PACK_2B_INT(&trx_buf->hdr_buffer, strlen(topic), frag);
+    PACK_2B_INT(&trx_buf->hdr_buffer, topic == NULL ? 0 : strlen(topic), frag);
+    if (topic != NULL) {
     if (_optimized_add(&trx_buf->hdr_buffer, log_ctx, topic, strlen(topic), topic_free, &frag))
         goto fail_rollback;
     BUFFER_TRANSACTION_NEW_FRAG(&trx_buf->hdr_buffer, 0, frag, goto fail_rollback);
+    }
 
     // [MQTT-3.3.2.2]
     mqtt_msg->packet_id = get_unused_packet_id();
@@ -1043,8 +1053,15 @@ int mqtt_ng_generate_publish(struct transaction_buffer *trx_buf,
     PACK_2B_INT(&trx_buf->hdr_buffer, mqtt_msg->packet_id, frag);
 
     // [MQTT-3.3.2.3.1] TODO Property Length for now fixed 0
-    *WRITE_POS(frag) = 0;
+    *WRITE_POS(frag) = topic_alias ? 3 : 0;
     DATA_ADVANCE(&trx_buf->hdr_buffer, 1, frag);
+
+    if(topic_alias) {
+        *WRITE_POS(frag) = MQTT_PROP_TOPIC_ALIAS;
+        DATA_ADVANCE(&trx_buf->hdr_buffer, 1, frag);
+
+        PACK_2B_INT(&trx_buf->hdr_buffer, topic_alias, frag);
+    }
 
     if( (frag = buffer_new_frag(&trx_buf->hdr_buffer, BUFFER_FRAG_DATA_EXTERNAL)) == NULL )
         goto fail_rollback;
@@ -1071,6 +1088,19 @@ int mqtt_ng_publish(struct mqtt_ng_client *client,
                     uint8_t publish_flags,
                     uint16_t *packet_id)
 {
+    struct topic_alias_data *alias = NULL;
+    c_rhash_get_ptr_by_str(client->tx_topic_aliases.stoi_dict, topic, (void**)&alias);
+
+    uint16_t topic_id = 0;
+
+    if (alias != NULL) {
+        topic_id = alias->idx;
+        if (alias->usage_count++) {
+            topic = NULL;
+            topic_free = NULL;
+        }
+    }
+
     TRY_GENERATE_MESSAGE(mqtt_ng_generate_publish, client, topic, topic_free, msg, msg_free, msg_len, publish_flags, packet_id);
 }
 
