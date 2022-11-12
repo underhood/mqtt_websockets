@@ -1558,6 +1558,14 @@ struct mqtt_wss_stats mqtt_wss_get_stats(mqtt_wss_client client)
     return current;
 }
 
+int mqtt_wss_set_topic_alias(mqtt_wss_client client, const char *topic)
+{
+    if(!client->internal_mqtt)
+        return 0;
+    
+    return mqtt_ng_set_topic_alias(client->mqtt.mqtt_ctx, topic);
+}
+
 #ifdef MQTT_WSS_DEBUG
 void mqtt_wss_set_SSL_CTX_keylog_cb(mqtt_wss_client client, void (*ssl_ctx_keylog_cb)(const SSL *ssl, const char *line))
 {

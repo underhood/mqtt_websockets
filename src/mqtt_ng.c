@@ -4,6 +4,8 @@
 #include <pthread.h>
 #include <inttypes.h>
 
+#include "c_rhash.h"
+
 #include "common_internal.h"
 #include "mqtt_constants.h"
 #include "mqtt_wss_log.h"
@@ -196,6 +198,17 @@ struct mqtt_ng_parser {
     } mqtt_packet;
 };
 
+struct topic_alias_data {
+    uint16_t idx;
+    uint32_t usage_count;
+};
+
+struct topic_aliases_data {
+    c_rhash stoi_dict;
+    uint32_t idx_max;
+    uint32_t idx_assigned;
+    int used;
+};
 
 struct mqtt_ng_client {
     struct transaction_buffer main_buffer;
@@ -223,7 +236,9 @@ struct mqtt_ng_client {
     unsigned int ping_pending:1;
 
     struct mqtt_ng_stats stats;
+
     pthread_mutex_t stats_mutex;
+    struct topic_aliases_data tx_topic_aliases;
 };
 
 char pingreq[] = { MQTT_CPT_PINGREQ << 4, 0x00 };
@@ -608,6 +623,7 @@ struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings)
     client->msg_callback = settings->msg_callback;
 
     pthread_mutex_init(&client->stats_mutex, NULL);
+    client->tx_topic_aliases.stoi_dict = c_rhash_new(0);
 
     return client;
 }
@@ -621,6 +637,9 @@ void mqtt_ng_destroy(struct mqtt_ng_client *client)
 {
     transaction_buffer_destroy(&client->main_buffer);
     pthread_mutex_destroy(&client->stats_mutex);
+
+    c_rhash_destroy(client->tx_topic_aliases.stoi_dict);
+
     mw_free(client);
 }
 
@@ -1900,3 +1919,17 @@ void mqtt_ng_get_stats(struct mqtt_ng_client *client, struct mqtt_ng_stats *stat
     UNLOCK_HDR_BUFFER(&client->main_buffer);
 }
 
+int mqtt_ng_set_topic_alias(struct mqtt_ng_client *client, const char *topic)
+{
+    if (client->tx_topic_aliases.idx_assigned >= client->tx_topic_aliases.idx_max) {
+        mws_error(client->log, "Tx topic alias indexes were exhausted (current version of the library doesn't support reassigning yet. Feel free to contribute.");
+        return 0; //0 is not a valid topic alias
+    }
+    struct topic_alias_data *alias = mw_malloc(sizeof(struct topic_alias_data));
+    alias->idx = ++client->tx_topic_aliases.idx_assigned;
+    alias->usage_count = 0;
+
+    c_rhash_insert_str_ptr(client->tx_topic_aliases.stoi_dict, topic, (void*)alias);
+
+    return alias->idx;
+}

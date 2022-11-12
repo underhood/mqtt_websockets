@@ -157,6 +157,8 @@ int mqtt_wss_publish5(mqtt_wss_client client,
                       uint8_t publish_flags,
                       uint16_t *packet_id);
 
+int mqtt_wss_set_topic_alias(mqtt_wss_client client, const char *topic);
+
 /* Subscribes to MQTT topic
  * @param client mqtt_wss_client which should do the subscription
  * @param topic MQTT topic to subscribe to
