@@ -90,3 +90,5 @@ int mqtt_ng_sync(struct mqtt_ng_client *client);
 time_t mqtt_ng_last_send_time(struct mqtt_ng_client *client);
 
 void mqtt_ng_set_max_mem(struct mqtt_ng_client *client, size_t bytes);
+
+void mqtt_ng_hexdump_target(const char *hxdmp);

@@ -172,4 +172,6 @@ struct mqtt_wss_stats {
 
 struct mqtt_wss_stats mqtt_wss_get_stats(mqtt_wss_client client);
 
+void mqtt_wss_hexdump_target(const char *hxdmp);
+
 #endif /* MQTT_WSS_CLIENT_H */

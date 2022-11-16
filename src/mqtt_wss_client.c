@@ -1471,3 +1471,7 @@ struct mqtt_wss_stats mqtt_wss_get_stats(mqtt_wss_client client)
     pthread_mutex_unlock(&client->stat_lock);
     return current;
 }
+
+void mqtt_wss_hexdump_target(const char *hxdmp) {
+    mqtt_ng_hexdump_target(hxdmp);
+}

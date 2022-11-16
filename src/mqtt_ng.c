@@ -9,6 +9,8 @@
 #include "mqtt_wss_log.h"
 #include "mqtt_ng.h"
 
+const char *fn_hexdmp = NULL;
+
 #define UNIT_LOG_PREFIX "mqtt_client: "
 #define FATAL(fmt, ...) mws_fatal(client->log, UNIT_LOG_PREFIX fmt, ##__VA_ARGS__)
 #define ERROR(fmt, ...) mws_error(client->log, UNIT_LOG_PREFIX fmt, ##__VA_ARGS__)
@@ -1636,6 +1638,63 @@ static int mark_packet_acked(struct mqtt_ng_client *client, uint16_t packet_id)
     return 1;
 }
 
+#include <stdio.h>
+FILE *f_hexdmp = NULL;
+
+void hexdump_file(struct mqtt_ng_client *client, const char* data, size_t len, size_t bytes_per_line)
+{
+    if (data == NULL || !len)
+        return;
+    int fl = 1;
+    if (fn_hexdmp) {
+        if(f_hexdmp == NULL) {
+            if ((f_hexdmp = fopen(fn_hexdmp, "a")) == NULL) {
+                ERROR("Error opening file for hexdump");
+            }
+            fprintf(f_hexdmp, ">> fopen\n");
+        }
+        fprintf(f_hexdmp, "> hexdump\n");
+        for (size_t i = 0; i < len; i++) {
+            if (!fl)
+                fputc(' ', f_hexdmp);
+            fprintf(f_hexdmp, "0x%02hhx", (unsigned char) data[i]);
+            fl = 0;
+            if((i+1) % bytes_per_line == 0) {
+                fputc('\n', f_hexdmp);
+                fl = 1;
+            }
+        }
+        fputc('\n', f_hexdmp);
+        fflush(f_hexdmp);
+    }
+}
+
+void hexdump_log(struct mqtt_ng_client *client, const char* data, size_t len, size_t bytes_per_line)
+{
+    if (data == NULL || !len)
+        return;
+    int fl = 1;
+    size_t bufsize = bytes_per_line * 5 + 3;
+    char buf[bufsize];
+    char *w = buf;
+    memset(buf, 0, bufsize);
+    DEBUG(">> hexdump");
+    for (size_t i = 0; i < len; i++) {
+        if (!fl)
+            *w++ = 0x20;
+        w += sprintf(w, "0x%02hhx", (unsigned char) data[i]);
+        fl = 0;
+        if((i+1) % bytes_per_line == 0) {
+            *w = 0;
+            DEBUG("> %s", buf);
+            fl = 1;
+            w = buf;
+        }
+    }
+    *w = 0;
+    DEBUG("> %s", buf);
+}
+
 int handle_incoming_traffic(struct mqtt_ng_client *client)
 {
     int rc;
@@ -1733,6 +1792,9 @@ int mqtt_ng_sync(struct mqtt_ng_client *client)
 
     int rc;
 
+    size_t bytes_avail;
+    const char *rptr = rbuf_get_linear_read_range(client->parser.received_data, &bytes_avail);
+    hexdump_log(client, rptr, bytes_avail, 16);
     while ((rc = handle_incoming_traffic(client)) != MQTT_NG_CLIENT_NEED_MORE_BYTES) {
         if (rc < 0)
             break;
@@ -1757,4 +1819,8 @@ time_t mqtt_ng_last_send_time(struct mqtt_ng_client *client)
 void mqtt_ng_set_max_mem(struct mqtt_ng_client *client, size_t bytes)
 {
     client->max_mem_bytes = bytes;
+}
+
+void mqtt_ng_hexdump_target(const char *hxdmp) {
+    fn_hexdmp = hxdmp;
 }
