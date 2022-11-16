@@ -1796,6 +1796,7 @@ int mqtt_ng_sync(struct mqtt_ng_client *client)
     const char *rptr = rbuf_get_linear_read_range(client->parser.received_data, &bytes_avail);
     hexdump_log(client, rptr, bytes_avail, 16);
     while ((rc = handle_incoming_traffic(client)) != MQTT_NG_CLIENT_NEED_MORE_BYTES) {
+        DEBUG("handle_incoming_traffic ret=%d", rc);
         if (rc < 0)
             break;
         if (rc == MQTT_NG_CLIENT_WANT_WRITE) {
@@ -1804,6 +1805,7 @@ int mqtt_ng_sync(struct mqtt_ng_client *client)
             UNLOCK_HDR_BUFFER(&client->main_buffer);
         }
     }
+    DEBUG("handle_incoming_traffic ret=%d", rc);
 
     if (rc < 0)
         return rc;
