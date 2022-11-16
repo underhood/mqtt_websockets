@@ -12,13 +12,19 @@
 # If not, see <https://www.gnu.org/licenses/>.
 
 CC = gcc -std=gnu99
-CFLAGS = -Wextra -Wall `pkg-config --cflags openssl` `pkg-config --cflags libcrypto`
+CFLAGS = -Wextra -Wall `pkg-config --cflags openssl` `pkg-config --cflags libcrypto` -ggdb
 BUILD_DIR = build
 
 # dir having our version of mqtt_pal.h must preceede dir of MQTT-C to override this hdr
 INCLUDES = -Isrc/include -Ic-rbuf/include -Imqtt/include -IMQTT-C/include
 
-all: test
+all: test test_ng_parser
+
+test_ng_parser: libmqttwebsockets.a $(BUILD_DIR)/mqtt_ng_parser_test.o
+	$(CC) -o test_ng_parser $(BUILD_DIR)/mqtt_ng_parser_test.o libmqttwebsockets.a `pkg-config --libs openssl` -lpthread $(CFLAGS)
+
+$(BUILD_DIR)/mqtt_ng_parser_test.o: libmqttwebsockets.a src/mqtt_ng_parser_test.c
+	$(CC) -o $(BUILD_DIR)/mqtt_ng_parser_test.o -c src/mqtt_ng_parser_test.c $(CFLAGS) $(INCLUDES)
 
 c-rbuf/build/ringbuffer.o:
 	cd c-rbuf && $(MAKE) build/ringbuffer.o

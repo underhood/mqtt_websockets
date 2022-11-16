@@ -1443,7 +1443,7 @@ static int parse_publish_varhdr(struct mqtt_ng_client *client)
 
 // TODO move to separate file, dont send whole client pointer just to be able
 // to access LOG context send parser only which should include log
-static int parse_data(struct mqtt_ng_client *client)
+int parse_data(struct mqtt_ng_client *client)
 {
     int rc;
     struct mqtt_ng_parser *parser = &client->parser;
