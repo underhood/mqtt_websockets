@@ -1694,7 +1694,11 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
                 DEBUG("Recevied PUBLISH");
 #endif
                 pub = &client->parser.mqtt_packet.publish;
+                if (client->parser.mqtt_control_packet_type & MQTT_PUBLISH_FLAG_DUP_MASK)
+                    WARN("Received PUBLISH (QoS:%" PRIu8 " PID:%d (-1 => N/A)) with DUP flag set (redelivery attempt).", pub->qos, pub->qos ? (int)pub->packet_id : -1);
+
                 if (pub->qos > 1) {
+                    ERROR("Received PUBLISH (QoS:%" PRIu8 " PID:%d (-1 => N/A)). QoS 2 not implemented yet!", pub->qos, pub->qos ? (int)pub->packet_id : -1);
                     mw_free(pub->topic);
                     mw_free(pub->data);
                     return MQTT_NG_CLIENT_NOT_IMPL_YET;
