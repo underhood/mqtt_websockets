@@ -720,21 +720,21 @@ static int _optimized_add(struct header_buffer *buf, mqtt_wss_log_ctx_t log_ctx,
     return 0;
 }
 
-#define TRY_GENERATE_MESSAGE(generator_function, buf, log_ctx, max_mem, ...) \
-    int rc = generator_function(buf, log_ctx, ##__VA_ARGS__); \
+#define TRY_GENERATE_MESSAGE(generator_function, client, ...) \
+    int rc = generator_function(&client->main_buffer, client->log, ##__VA_ARGS__); \
     if (rc == MQTT_NG_MSGGEN_BUFFER_OOM) { \
-        LOCK_HDR_BUFFER(buf); \
-        transaction_buffer_garbage_collect((buf), log_ctx); \
-        UNLOCK_HDR_BUFFER(buf); \
-        rc = generator_function(buf, log_ctx, ##__VA_ARGS__); \
-        if (rc == MQTT_NG_MSGGEN_BUFFER_OOM && max_mem) { \
-            LOCK_HDR_BUFFER(buf); \
-            transaction_buffer_grow((buf), log_ctx, GROWTH_FACTOR, max_mem); \
-            UNLOCK_HDR_BUFFER(buf); \
-            rc = generator_function(buf, log_ctx, ##__VA_ARGS__); \
+        LOCK_HDR_BUFFER(&client->main_buffer); \
+        transaction_buffer_garbage_collect((&client->main_buffer), client->log); \
+        UNLOCK_HDR_BUFFER(&client->main_buffer); \
+        rc = generator_function(&client->main_buffer, client->log, ##__VA_ARGS__); \
+        if (rc == MQTT_NG_MSGGEN_BUFFER_OOM && client->max_mem_bytes) { \
+            LOCK_HDR_BUFFER(&client->main_buffer); \
+            transaction_buffer_grow((&client->main_buffer), client->log, GROWTH_FACTOR, client->max_mem_bytes); \
+            UNLOCK_HDR_BUFFER(&client->main_buffer); \
+            rc = generator_function(&client->main_buffer, client->log, ##__VA_ARGS__); \
         } \
         if (rc == MQTT_NG_MSGGEN_BUFFER_OOM) \
-            mws_error(log_ctx, "%s failed to generate message due to insufficient buffer space (line %d)", __FUNCTION__, __LINE__); \
+            mws_error(client->log, "%s failed to generate message due to insufficient buffer space (line %d)", __FUNCTION__, __LINE__); \
     } \
     return rc;
 
@@ -1006,7 +1006,7 @@ int mqtt_ng_publish(struct mqtt_ng_client *client,
                     uint8_t publish_flags,
                     uint16_t *packet_id)
 {
-    TRY_GENERATE_MESSAGE(mqtt_ng_generate_publish, &client->main_buffer, client->log, client->max_mem_bytes, topic, topic_free, msg, msg_free, msg_len, publish_flags, packet_id);
+    TRY_GENERATE_MESSAGE(mqtt_ng_generate_publish, client, topic, topic_free, msg, msg_free, msg_len, publish_flags, packet_id);
 }
 
 static inline size_t mqtt_ng_subscribe_size(struct mqtt_sub *subs, size_t sub_count)
@@ -1072,7 +1072,7 @@ fail_rollback:
 
 int mqtt_ng_subscribe(struct mqtt_ng_client *client, struct mqtt_sub *subs, size_t sub_count)
 {
-    TRY_GENERATE_MESSAGE(mqtt_ng_generate_subscribe, &client->main_buffer, client->log, client->max_mem_bytes, subs, sub_count);
+    TRY_GENERATE_MESSAGE(mqtt_ng_generate_subscribe, client, subs, sub_count);
 }
 
 int mqtt_ng_generate_disconnect(struct transaction_buffer *trx_buf, mqtt_wss_log_ctx_t log_ctx, uint8_t reason_code)
@@ -1116,7 +1116,7 @@ fail_rollback:
 
 int mqtt_ng_disconnect(struct mqtt_ng_client *client, uint8_t reason_code)
 {
-    TRY_GENERATE_MESSAGE(mqtt_ng_generate_disconnect, &client->main_buffer, client->log, client->max_mem_bytes, reason_code);
+    TRY_GENERATE_MESSAGE(mqtt_ng_generate_disconnect, client, reason_code);
 }
 
 static int mqtt_generate_puback(struct transaction_buffer *trx_buf, mqtt_wss_log_ctx_t log_ctx, uint16_t packet_id, uint8_t reason_code)
@@ -1161,7 +1161,7 @@ fail_rollback:
 
 static int mqtt_ng_puback(struct mqtt_ng_client *client, uint16_t packet_id, uint8_t reason_code)
 {
-    TRY_GENERATE_MESSAGE(mqtt_generate_puback, &client->main_buffer, client->log, client->max_mem_bytes, packet_id, reason_code);
+    TRY_GENERATE_MESSAGE(mqtt_generate_puback, client, packet_id, reason_code);
 }
 
 int mqtt_ng_ping(struct mqtt_ng_client *client)
