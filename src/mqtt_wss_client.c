@@ -1504,6 +1504,7 @@ struct mqtt_wss_stats mqtt_wss_get_stats(mqtt_wss_client client)
     current = client->stats;
     memset(&client->stats, 0, sizeof(client->stats));
     pthread_mutex_unlock(&client->stat_lock);
+    mqtt_ng_get_stats(client->mqtt.mqtt_ctx, &current.mqtt);
     return current;
 }
 
