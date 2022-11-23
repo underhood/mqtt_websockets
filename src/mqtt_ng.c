@@ -199,6 +199,9 @@ struct mqtt_ng_client {
     void (*msg_callback)(const char *topic, const void *msg, size_t msglen, int qos);
 
     unsigned int ping_pending:1;
+
+    struct mqtt_ng_stats stats;
+    pthread_mutex_t stats_mutex;
 };
 
 char pingreq[] = { MQTT_CPT_PINGREQ << 4, 0x00 };
@@ -356,6 +359,7 @@ static inline enum memory_mode ptr2memory_mode(void * ptr) {
 }
 
 #define frag_is_marked_for_gc(frag) ((frag->flags & BUFFER_FRAG_GARBAGE_COLLECT) || ((frag->flags & BUFFER_FRAG_GARBAGE_COLLECT_ON_SEND) && frag->sent == frag->len))
+#define FRAG_SIZE_IN_BUFFER(frag) (sizeof(struct buffer_fragment) + ((frag->flags & BUFFER_FRAG_DATA_EXTERNAL) ? 0 : frag->len))
 
 static void buffer_frag_free_data(struct buffer_fragment *frag)
 {
@@ -581,6 +585,8 @@ struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings)
     client->connack_callback = settings->connack_callback;
     client->msg_callback = settings->msg_callback;
 
+    pthread_mutex_init(&client->stats_mutex, NULL);
+
     return client;
 }
 
@@ -592,6 +598,7 @@ static inline uint8_t get_control_packet_type(uint8_t first_hdr_byte)
 void mqtt_ng_destroy(struct mqtt_ng_client *client)
 {
     transaction_buffer_destroy(&client->main_buffer);
+    pthread_mutex_destroy(&client->stats_mutex);
     mw_free(client);
 }
 
@@ -735,6 +742,11 @@ static int _optimized_add(struct header_buffer *buf, mqtt_wss_log_ctx_t log_ctx,
         } \
         if (rc == MQTT_NG_MSGGEN_BUFFER_OOM) \
             mws_error(client->log, "%s failed to generate message due to insufficient buffer space (line %d)", __FUNCTION__, __LINE__); \
+    } \
+    if (rc == MQTT_NG_MSGGEN_OK) { \
+        pthread_mutex_lock(&client->stats_mutex); \
+        client->stats.tx_messages_queued++; \
+        pthread_mutex_unlock(&client->stats_mutex); \
     } \
     return rc;
 
@@ -909,6 +921,15 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
     if (client->connect_msg == NULL) {
         return 1;
     }
+
+    pthread_mutex_lock(&client->stats_mutex);
+    if (clean_start)
+        client->stats.tx_messages_queued++;
+    else
+        client->stats.tx_messages_queued = 1;
+    client->stats.tx_messages_sent = 0;
+    client->stats.rx_messages_rcvd = 0;
+    pthread_mutex_unlock(&client->stats_mutex);
 
     client->client_state = CONNECT_PENDING;
     return 0;
@@ -1589,6 +1610,11 @@ static int send_fragment(struct mqtt_ng_client *client) {
 
     if (frag->flags & BUFFER_FRAG_MQTT_PACKET_TAIL) {
         client->time_of_last_send = time(NULL);
+        pthread_mutex_lock(&client->stats_mutex);
+        if (client->main_buffer.sending_frag != &ping_frag)
+            client->stats.tx_messages_queued--;
+        client->stats.tx_messages_sent++;
+        pthread_mutex_unlock(&client->stats_mutex);
         client->main_buffer.sending_frag = NULL;
         return 1;
     }
@@ -1654,6 +1680,10 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
 #ifdef MQTT_DEBUG_VERBOSE
         DEBUG("MQTT Packet Parsed Successfully!");
 #endif
+        pthread_mutex_lock(&client->stats_mutex);
+        client->stats.rx_messages_rcvd++;
+        pthread_mutex_unlock(&client->stats_mutex);
+
         switch (get_control_packet_type(client->parser.mqtt_control_packet_type)) {
             case MQTT_CPT_CONNACK:
 #ifdef MQTT_DEBUG_VERBOSE
@@ -1767,3 +1797,28 @@ void mqtt_ng_set_max_mem(struct mqtt_ng_client *client, size_t bytes)
 {
     client->max_mem_bytes = bytes;
 }
+
+void mqtt_ng_get_stats(struct mqtt_ng_client *client, struct mqtt_ng_stats *stats)
+{
+    pthread_mutex_lock(&client->stats_mutex);
+    memcpy(stats, &client->stats, sizeof(struct mqtt_ng_stats));
+    pthread_mutex_unlock(&client->stats_mutex);
+
+    stats->tx_bytes_queued = 0;
+    stats->tx_buffer_reclaimable = 0;
+
+    LOCK_HDR_BUFFER(&client->main_buffer);
+    stats->tx_buffer_used = BUFFER_BYTES_USED(&client->main_buffer.hdr_buffer);
+    stats->tx_buffer_free = BUFFER_BYTES_AVAILABLE(&client->main_buffer.hdr_buffer);
+    stats->tx_buffer_size = client->main_buffer.hdr_buffer.size;
+    struct buffer_fragment *frag = BUFFER_FIRST_FRAG(&client->main_buffer.hdr_buffer);
+    while (frag) {
+        stats->tx_bytes_queued += frag->len - frag->sent;
+        if (frag_is_marked_for_gc(frag))
+            stats->tx_buffer_reclaimable += FRAG_SIZE_IN_BUFFER(frag);
+
+        frag = frag->next;
+    }
+    UNLOCK_HDR_BUFFER(&client->main_buffer);
+}
+
