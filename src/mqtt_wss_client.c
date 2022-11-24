@@ -1159,7 +1159,7 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
                 ret != SSL_ERROR_WANT_WRITE) {
                 mws_error(client->log, "SSL_read error: %d %s", ret, util_openssl_ret_err(ret));
                 if (ret == SSL_ERROR_SYSCALL)
-                    mws_error(client->log, "SSL_read SYSCALL errno: %d %s", errnobkp, strerrorname_np(errnobkp));
+                    mws_error(client->log, "SSL_read SYSCALL errno: %d %s", errnobkp, strerror(errnobkp));
                 return MQTT_WSS_ERR_CONN_DROP;
             }
         }
@@ -1210,7 +1210,7 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
                 ret != SSL_ERROR_WANT_WRITE) {
                 mws_error(client->log, "SSL_write error: %d %s", ret, util_openssl_ret_err(ret));
                 if (ret == SSL_ERROR_SYSCALL)
-                    mws_error(client->log, "SSL_write SYSCALL errno: %d %s", errnobkp, strerrorname_np(errnobkp));
+                    mws_error(client->log, "SSL_write SYSCALL errno: %d %s", errnobkp, strerror(errnobkp));
                 return MQTT_WSS_ERR_CONN_DROP;
             }
         }
