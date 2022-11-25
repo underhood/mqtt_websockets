@@ -1088,13 +1088,13 @@ static inline long long int t_till_next_keepalive_ms(mqtt_wss_client client)
 }
 
 #ifdef MQTT_WSS_CPUSTATS
-static inline usec_t now_usec(mqtt_wss_client client) {
+static inline uint64_t mqtt_wss_now_usec(mqtt_wss_client client) {
     struct timespec ts;
     if(clock_gettime(CLOCK_MONOTONIC, &ts) == -1) {
         mws_error(client->log, "clock_gettime(CLOCK_MONOTONIC, &timespec) failed.");
         return 0;
     }
-    return (usec_t)ts.tv_sec * USEC_PER_SEC + (ts.tv_nsec % NSEC_PER_SEC) / NSEC_PER_USEC;
+    return (uint64_t)ts.tv_sec * USEC_PER_SEC + (ts.tv_nsec % NSEC_PER_SEC) / NSEC_PER_USEC;
 }
 #endif
 
@@ -1106,8 +1106,8 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
     int send_keepalive = 0;
 
 #ifdef MQTT_WSS_CPUSTATS
-    usec_t t1,t2;
-    t1 = now_usec(client);
+    uint64_t t1,t2;
+    t1 = mqtt_wss_now_usec(client);
 #endif
 
 #ifdef DEBUG_ULTRA_VERBOSE
@@ -1129,7 +1129,7 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
     }
 
 #ifdef MQTT_WSS_CPUSTATS
-    t2 = now_usec(client);
+    t2 = mqtt_wss_now_usec(client);
     client->stats.time_keepalive += t2 - t1;
 #endif
 
@@ -1156,7 +1156,7 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
     }
 
 #ifdef MQTT_WSS_CPUSTATS
-    t1 = now_usec(client);
+    t1 = mqtt_wss_now_usec(client);
 #endif
 
     if (ret == 0) {
@@ -1178,7 +1178,7 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
     }
 
 #ifdef MQTT_WSS_CPUSTATS
-    t2 = now_usec(client);
+    t2 = mqtt_wss_now_usec(client);
     client->stats.time_keepalive += t2 - t1;
 #endif
 
@@ -1211,7 +1211,7 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
     }
 
 #ifdef MQTT_WSS_CPUSTATS
-    t1 = now_usec(client);
+    t1 = mqtt_wss_now_usec(client);
     client->stats.time_read_socket += t1 - t2;
 #endif
 
@@ -1230,7 +1230,7 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
     }
 
 #ifdef MQTT_WSS_CPUSTATS
-    t2 = now_usec(client);
+    t2 = mqtt_wss_now_usec(client);
     client->stats.time_process_websocket += t2 - t1;
 #endif
 
@@ -1243,7 +1243,7 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
     }
 
 #ifdef MQTT_WSS_CPUSTATS
-    t1 = now_usec(client);
+    t1 = mqtt_wss_now_usec(client);
     client->stats.time_process_mqtt += t1 - t2;
 #endif
 
@@ -1280,7 +1280,7 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
         util_clear_pipe(client->write_notif_pipe[PIPE_READ_END]);
 
 #ifdef MQTT_WSS_CPUSTATS
-    t2 = now_usec(client);
+    t2 = mqtt_wss_now_usec(client);
     client->stats.time_write_socket += t2 - t1;
 #endif
 
