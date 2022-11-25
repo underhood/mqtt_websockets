@@ -165,9 +165,20 @@ int mqtt_wss_publish5(mqtt_wss_client client,
  */
 int mqtt_wss_subscribe(mqtt_wss_client client, char *topic, int max_qos_level);
 
+#ifdef MQTT_WSS_CPUSTATS
+typedef uint64_t usec_t;
+#endif
+
 struct mqtt_wss_stats {
     uint64_t bytes_tx;
     uint64_t bytes_rx;
+#ifdef MQTT_WSS_CPUSTATS
+    usec_t time_keepalive;
+    usec_t time_read_socket;
+    usec_t time_write_socket;
+    usec_t time_process_websocket;
+    usec_t time_process_mqtt;
+#endif
     struct mqtt_ng_stats mqtt;
 };
 
