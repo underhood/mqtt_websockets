@@ -1101,7 +1101,7 @@ int mqtt_ng_publish(struct mqtt_ng_client *client,
         }
     }
 
-    TRY_GENERATE_MESSAGE(mqtt_ng_generate_publish, client, topic, topic_free, msg, msg_free, msg_len, publish_flags, packet_id);
+    TRY_GENERATE_MESSAGE(mqtt_ng_generate_publish, client, topic, topic_free, msg, msg_free, msg_len, publish_flags, packet_id, topic_id);
 }
 
 static inline size_t mqtt_ng_subscribe_size(struct mqtt_sub *subs, size_t sub_count)
