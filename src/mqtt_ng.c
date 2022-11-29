@@ -1372,7 +1372,7 @@ static int parse_properties_array(struct mqtt_properties_parser_ctx *ctx, rbuf_t
                     ctx->state = PROPERTY_TYPE_UINT16;
                     break;
                 default:
-                    mws_error(log, "Unsupported property type %d.", (int)ctx->tail->type);
+                    mws_error(log, "Unsupported property type %d for property id %d.", (int)ctx->tail->type, (int)ctx->tail->id);
                     return MQTT_NG_CLIENT_PROTOCOL_ERROR;
             }
             break;
