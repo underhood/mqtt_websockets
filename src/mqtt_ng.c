@@ -1322,13 +1322,14 @@ struct mqtt_property_type {
 };
 
 const struct mqtt_property_type mqtt_property_types[] = {
-    { .id = MQTT_PROP_TOPIC_ALIAS_MAX,  .name = MQTT_PROP_TOPIC_ALIAS_MAX_NAME,  .datatype = MQTT_TYPE_UINT_16 },
-    { .id = MQTT_PROP_RECEIVE_MAX,      .name = MQTT_PROP_RECEIVE_MAX_NAME,      .datatype = MQTT_TYPE_UINT_16 },
-    { .id = MQTT_PROP_MAX_PKT_SIZE,     .name = MQTT_PROP_MAX_PKT_SIZE_NAME,     .datatype = MQTT_TYPE_UINT_32 },
-    { .id = MQTT_PROP_RETAIN_AVAIL,     .name = MQTT_PROP_RETAIN_AVAIL_NAME,     .datatype = MQTT_TYPE_UINT_8  },
-    { .id = MQTT_PROP_SHARED_SUB_AVAIL, .name = MQTT_PROP_SHARED_SUB_AVAIL_NAME, .datatype = MQTT_TYPE_UINT_8  },
-    { .id = MQTT_PROP_SUB_ID_AVAIL,     .name = MQTT_PROP_SUB_ID_AVAIL_NAME,     .datatype = MQTT_TYPE_UINT_8  },
-    { .id = 0,                          .name = NULL,                            .datatype = MQTT_TYPE_UNKNOWN }
+    { .id = MQTT_PROP_TOPIC_ALIAS_MAX,    .name = MQTT_PROP_TOPIC_ALIAS_MAX_NAME,    .datatype = MQTT_TYPE_UINT_16 },
+    { .id = MQTT_PROP_RECEIVE_MAX,        .name = MQTT_PROP_RECEIVE_MAX_NAME,        .datatype = MQTT_TYPE_UINT_16 },
+    { .id = MQTT_PROP_MAX_PKT_SIZE,       .name = MQTT_PROP_MAX_PKT_SIZE_NAME,       .datatype = MQTT_TYPE_UINT_32 },
+    { .id = MQTT_PROP_RETAIN_AVAIL,       .name = MQTT_PROP_RETAIN_AVAIL_NAME,       .datatype = MQTT_TYPE_UINT_8  },
+    { .id = MQTT_PROP_SHARED_SUB_AVAIL,   .name = MQTT_PROP_SHARED_SUB_AVAIL_NAME,   .datatype = MQTT_TYPE_UINT_8  },
+    { .id = MQTT_PROP_SUB_ID_AVAIL,       .name = MQTT_PROP_SUB_ID_AVAIL_NAME,       .datatype = MQTT_TYPE_UINT_8  },
+    { .id = MQTT_PROP_WILDCARD_SUB_AVAIL, .name = MQTT_PROP_WILDCARD_SUB_AVAIL_NAME, .datatype = MQTT_TYPE_UINT_8  },
+    { .id = 0,                            .name = NULL,                              .datatype = MQTT_TYPE_UNKNOWN }
 };
 
 static int get_property_type_by_id(uint8_t property_id) {
