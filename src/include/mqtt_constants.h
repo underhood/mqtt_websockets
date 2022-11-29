@@ -51,5 +51,7 @@
 #define MQTT_PROP_RECEIVE_MAX_NAME     "Receive Maximum"
 #define MQTT_PROP_MAX_PKT_SIZE         0x27
 #define MQTT_PROP_MAX_PKT_SIZE_NAME    "Maximum Packet Size"
+#define MQTT_PROP_RETAIN_AVAIL         0x25
+#define MQTT_PROP_RETAIN_AVAIL_NAME    "Retain Available"
 
 #endif /* MQTT_CONSTANTS_H */
