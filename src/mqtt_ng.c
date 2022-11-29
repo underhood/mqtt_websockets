@@ -1042,9 +1042,9 @@ int mqtt_ng_generate_publish(struct transaction_buffer *trx_buf,
     // [MQTT-3.3.2.1]
     PACK_2B_INT(&trx_buf->hdr_buffer, topic == NULL ? 0 : strlen(topic), frag);
     if (topic != NULL) {
-    if (_optimized_add(&trx_buf->hdr_buffer, log_ctx, topic, strlen(topic), topic_free, &frag))
-        goto fail_rollback;
-    BUFFER_TRANSACTION_NEW_FRAG(&trx_buf->hdr_buffer, 0, frag, goto fail_rollback);
+        if (_optimized_add(&trx_buf->hdr_buffer, log_ctx, topic, strlen(topic), topic_free, &frag))
+            goto fail_rollback;
+        BUFFER_TRANSACTION_NEW_FRAG(&trx_buf->hdr_buffer, 0, frag, goto fail_rollback);
     }
 
     // [MQTT-3.3.2.2]
