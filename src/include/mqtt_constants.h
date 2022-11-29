@@ -43,15 +43,17 @@
 #define MQTT_MAX_CLIENT_ID 23 /* [MQTT-3.1.3-5] */
 
 // MQTT Property identifiers [MQTT-2.2.2.2]
-#define MQTT_PROP_TOPIC_ALIAS          0x23
-#define MQTT_PROP_TOPIC_ALIAS_NAME     "Topic Alias"
-#define MQTT_PROP_TOPIC_ALIAS_MAX      0x22 // [MQTT-3.1.2.11.5]
-#define MQTT_PROP_TOPIC_ALIAS_MAX_NAME "Topic Alias Maximum"
-#define MQTT_PROP_RECEIVE_MAX          0x21
-#define MQTT_PROP_RECEIVE_MAX_NAME     "Receive Maximum"
-#define MQTT_PROP_MAX_PKT_SIZE         0x27
-#define MQTT_PROP_MAX_PKT_SIZE_NAME    "Maximum Packet Size"
-#define MQTT_PROP_RETAIN_AVAIL         0x25
-#define MQTT_PROP_RETAIN_AVAIL_NAME    "Retain Available"
+#define MQTT_PROP_RECEIVE_MAX           0x21
+#define MQTT_PROP_RECEIVE_MAX_NAME      "Receive Maximum"
+#define MQTT_PROP_TOPIC_ALIAS_MAX       0x22 // [MQTT-3.1.2.11.5]
+#define MQTT_PROP_TOPIC_ALIAS_MAX_NAME  "Topic Alias Maximum"
+#define MQTT_PROP_TOPIC_ALIAS           0x23
+#define MQTT_PROP_TOPIC_ALIAS_NAME      "Topic Alias"
+#define MQTT_PROP_RETAIN_AVAIL          0x25
+#define MQTT_PROP_RETAIN_AVAIL_NAME     "Retain Available"
+#define MQTT_PROP_MAX_PKT_SIZE          0x27
+#define MQTT_PROP_MAX_PKT_SIZE_NAME     "Maximum Packet Size"
+#define MQTT_PROP_SHARED_SUB_AVAIL      0x2A
+#define MQTT_PROP_SHARED_SUB_AVAIL_NAME "Shared Subscription Available"
 
 #endif /* MQTT_CONSTANTS_H */

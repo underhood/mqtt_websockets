@@ -1326,6 +1326,7 @@ const struct mqtt_property_type mqtt_property_types[] = {
     { .id = MQTT_PROP_RECEIVE_MAX,     .name = MQTT_PROP_RECEIVE_MAX_NAME,     .datatype = MQTT_TYPE_UINT_16 },
     { .id = MQTT_PROP_MAX_PKT_SIZE,    .name = MQTT_PROP_MAX_PKT_SIZE_NAME,    .datatype = MQTT_TYPE_UINT_32 },
     { .id = MQTT_PROP_RETAIN_AVAIL,    .name = MQTT_PROP_RETAIN_AVAIL_NAME,    .datatype = MQTT_TYPE_UINT_8  },
+    { .id = MQTT_PROP_SHARED_SUB_AVAIL,.name = MQTT_PROP_SHARED_SUB_AVAIL_NAME,.datatype = MQTT_TYPE_UINT_8  },
     { .id = 0,                         .name = NULL,                           .datatype = MQTT_TYPE_UNKNOWN }
 };
 
