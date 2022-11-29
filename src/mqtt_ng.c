@@ -131,6 +131,7 @@ enum mqtt_properties_parser_state {
     PROPERTIES_LENGTH = 0,
     PROPERTY_CREATE,
     PROPERTY_ID,
+    PROPERTY_TYPE_UINT8,
     PROPERTY_TYPE_UINT16,
     PROPERTY_TYPE_UINT32,
     PROPERTY_NEXT
@@ -1377,10 +1378,19 @@ static int parse_properties_array(struct mqtt_properties_parser_ctx *ctx, rbuf_t
                 case MQTT_TYPE_UINT_32:
                     ctx->state = PROPERTY_TYPE_UINT32;
                     break;
+                case MQTT_TYPE_UINT_8:
+                    ctx->state = PROPERTY_TYPE_UINT8;
+                    break;
                 default:
                     mws_error(log, "Unsupported property type %d for property id %d.", (int)ctx->tail->type, (int)ctx->tail->id);
                     return MQTT_NG_CLIENT_PROTOCOL_ERROR;
             }
+            break;
+        case PROPERTY_TYPE_UINT8:
+            BUF_READ_CHECK_AT_LEAST(data, sizeof(uint8_t));
+            rbuf_pop(data, (char*)&ctx->tail->data.uint8, sizeof(uint8_t));
+            ctx->bytes_consumed += sizeof(uint8_t);
+            ctx->state = PROPERTY_NEXT;
             break;
         case PROPERTY_TYPE_UINT32:
             BUF_READ_CHECK_AT_LEAST(data, sizeof(uint32_t));
