@@ -49,5 +49,7 @@
 #define MQTT_PROP_TOPIC_ALIAS_MAX_NAME "Topic Alias Maximum"
 #define MQTT_PROP_RECEIVE_MAX          0x21
 #define MQTT_PROP_RECEIVE_MAX_NAME     "Receive Maximum"
+#define MQTT_PROP_MAX_PKT_SIZE         0x27
+#define MQTT_PROP_MAX_PKT_SIZE_NAME    "Maximum Packet Size"
 
 #endif /* MQTT_CONSTANTS_H */

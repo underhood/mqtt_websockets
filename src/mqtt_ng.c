@@ -132,6 +132,7 @@ enum mqtt_properties_parser_state {
     PROPERTY_CREATE,
     PROPERTY_ID,
     PROPERTY_TYPE_UINT16,
+    PROPERTY_TYPE_UINT32,
     PROPERTY_NEXT
 };
 
@@ -1322,6 +1323,7 @@ struct mqtt_property_type {
 const struct mqtt_property_type mqtt_property_types[] = {
     { .id = MQTT_PROP_TOPIC_ALIAS_MAX, .name = MQTT_PROP_TOPIC_ALIAS_MAX_NAME, .datatype = MQTT_TYPE_UINT_16 },
     { .id = MQTT_PROP_RECEIVE_MAX,     .name = MQTT_PROP_RECEIVE_MAX_NAME,     .datatype = MQTT_TYPE_UINT_16 },
+    { .id = MQTT_PROP_MAX_PKT_SIZE,    .name = MQTT_PROP_MAX_PKT_SIZE_NAME,    .datatype = MQTT_TYPE_UINT_32 },
     { .id = 0,                         .name = NULL,                           .datatype = MQTT_TYPE_UNKNOWN }
 };
 
@@ -1371,13 +1373,23 @@ static int parse_properties_array(struct mqtt_properties_parser_ctx *ctx, rbuf_t
                 case MQTT_TYPE_UINT_16:
                     ctx->state = PROPERTY_TYPE_UINT16;
                     break;
+                case MQTT_TYPE_UINT_32:
+                    ctx->state = PROPERTY_TYPE_UINT32;
+                    break;
                 default:
                     mws_error(log, "Unsupported property type %d for property id %d.", (int)ctx->tail->type, (int)ctx->tail->id);
                     return MQTT_NG_CLIENT_PROTOCOL_ERROR;
             }
             break;
+        case PROPERTY_TYPE_UINT32:
+            BUF_READ_CHECK_AT_LEAST(data, sizeof(uint32_t));
+            rbuf_pop(data, (char*)&ctx->tail->data.uint32, sizeof(uint32_t));
+            ctx->tail->data.uint32 = be32toh(ctx->tail->data.uint32);
+            ctx->bytes_consumed += sizeof(uint32_t);
+            ctx->state = PROPERTY_NEXT;
+            break;
         case PROPERTY_TYPE_UINT16:
-            BUF_READ_CHECK_AT_LEAST(data, 2);
+            BUF_READ_CHECK_AT_LEAST(data, sizeof(uint16_t));
             rbuf_pop(data, (char*)&ctx->tail->data.uint16, sizeof(uint16_t));
             ctx->tail->data.uint16 = be16toh(ctx->tail->data.uint16);
             ctx->bytes_consumed += sizeof(uint16_t);
