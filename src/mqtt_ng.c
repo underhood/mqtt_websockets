@@ -1309,7 +1309,12 @@ static int vbi_parser_parse(struct mqtt_vbi_parser_ctx *ctx, rbuf_t data, mqtt_w
 static void mqtt_properties_parser_ctx_reset(struct mqtt_properties_parser_ctx *ctx)
 {
     ctx->state = PROPERTIES_LENGTH;
-    ctx->head = NULL;
+    while (ctx->head) {
+        struct mqtt_property *f = ctx->head;
+        ctx->head = ctx->head->next;
+        mw_free(f);
+    }
+    ctx->tail = NULL;
     ctx->properties_length = 0;
     ctx->bytes_consumed = 0;
     vbi_parser_reset_ctx(&ctx->vbi_parser_ctx);
