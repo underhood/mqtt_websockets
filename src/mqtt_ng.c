@@ -239,9 +239,10 @@ struct mqtt_ng_client {
     unsigned int ping_pending:1;
 
     struct mqtt_ng_stats stats;
-
     pthread_mutex_t stats_mutex;
+
     struct topic_aliases_data tx_topic_aliases;
+    c_rhash rx_aliases;
 };
 
 char pingreq[] = { MQTT_CPT_PINGREQ << 4, 0x00 };
@@ -627,7 +628,9 @@ struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings)
 
     pthread_mutex_init(&client->stats_mutex, NULL);
     client->tx_topic_aliases.stoi_dict = c_rhash_new(0);
-    client->tx_topic_aliases.idx_max = 65535;
+    client->tx_topic_aliases.idx_max = UINT16_MAX;
+
+    client->rx_aliases = c_rhash_new(UINT16_MAX << 8);
 
     return client;
 }
@@ -1347,6 +1350,17 @@ static int get_property_type_by_id(uint8_t property_id) {
     return MQTT_TYPE_UNKNOWN;
 }
 
+struct mqtt_property *get_property_by_id(struct mqtt_property *props, uint8_t property_id)
+{
+    while (props) {
+        if (props->id == property_id) {
+            return props;
+        }
+        props = props->next;
+    }
+    return NULL;
+}
+
 // Parses [MQTT-2.2.2]
 static int parse_properties_array(struct mqtt_properties_parser_ctx *ctx, rbuf_t data, mqtt_wss_log_ctx_t log)
 {
@@ -1911,9 +1925,30 @@ int handle_incoming_traffic(struct mqtt_ng_client *client)
                     ERROR("Error generating PUBACK reply for PUBLISH");
                     return rc;
                 }
+                struct mqtt_property *prop;
+                if ( (prop = get_property_by_id(client->parser.properties_parser.head, MQTT_PROP_TOPIC_ALIAS)) != NULL ) {
+                    // Topic Alias property was sent from server
+                    void *topic_ptr;
+                    if (!c_rhash_get_ptr_by_uint64(client->rx_aliases, prop->data.uint8, &topic_ptr)) {
+                        if (pub->topic != NULL) {
+                            ERROR("We do not yet support topic alias reassignment");
+                            return MQTT_NG_CLIENT_NOT_IMPL_YET;
+                        }
+                        pub->topic = topic_ptr;
+                    } else {
+                        if (pub->topic == NULL) {
+                            ERROR("Topic alias with id %d unknown and topic not set by server!", prop->data.uint8);
+                            return MQTT_NG_CLIENT_PROTOCOL_ERROR;
+                        }
+                        c_rhash_insert_uint64_ptr(client->rx_aliases, prop->data.uint8, pub->topic);
+                    }
+                }
                 if (client->msg_callback)
                     client->msg_callback(pub->topic, pub->data, pub->data_len, pub->qos);
-                mw_free(pub->topic);
+                // in case we have property topic alias and we have topic we take over the string
+                // and add pointer to it into topic alias list
+                if (prop == NULL)
+                    mw_free(pub->topic);
                 mw_free(pub->data);
                 return MQTT_NG_CLIENT_WANT_WRITE;
             case MQTT_CPT_DISCONNECT:
