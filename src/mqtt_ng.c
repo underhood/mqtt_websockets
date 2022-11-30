@@ -94,6 +94,7 @@ enum varhdr_parser_state {
     MQTT_PARSE_VARHDR_OPTIONAL_REASON_CODE,
     MQTT_PARSE_VARHDR_PROPS,
     MQTT_PARSE_VARHDR_TOPICNAME,
+    MQTT_PARSE_VARHDR_POST_TOPICNAME,
     MQTT_PARSE_VARHDR_PACKET_ID,
     MQTT_PARSE_REASONCODES,
     MQTT_PARSE_PAYLOAD
@@ -1000,7 +1001,7 @@ static inline size_t mqtt_ng_publish_size(const char *topic,
 
     if (topic_id)
         retval += 3;
-    
+
     return retval;
 }
 
@@ -1561,20 +1562,28 @@ static int parse_publish_varhdr(struct mqtt_ng_client *client)
     switch (parser->varhdr_state) {
         case MQTT_PARSE_VARHDR_INITIAL:
             BUF_READ_CHECK_AT_LEAST(parser->received_data, 2);
+            publish->topic = NULL;
             publish->qos = ((parser->mqtt_control_packet_type >> 1) & 0x03);
             rbuf_pop(parser->received_data, (char*)&publish->topic_len, 2);
             publish->topic_len = be16toh(publish->topic_len);
+            parser->mqtt_parsed_len = 2;
+            if (!publish->topic_len) {
+                parser->varhdr_state = MQTT_PARSE_VARHDR_POST_TOPICNAME;
+                break;
+            }
             publish->topic = mw_calloc(1, publish->topic_len + 1 /* add 0x00 */);
             if (publish->topic == NULL)
                 return MQTT_NG_CLIENT_OOM;
             parser->varhdr_state = MQTT_PARSE_VARHDR_TOPICNAME;
-            parser->mqtt_parsed_len = 2;
             /* FALLTHROUGH */
         case MQTT_PARSE_VARHDR_TOPICNAME:
             // TODO check empty topic can be valid? In which case we have to skip this step
             BUF_READ_CHECK_AT_LEAST(parser->received_data, publish->topic_len);
             rbuf_pop(parser->received_data, publish->topic, publish->topic_len);
             parser->mqtt_parsed_len += publish->topic_len;
+            parser->varhdr_state = MQTT_PARSE_VARHDR_POST_TOPICNAME;
+            /* FALLTHROUGH */
+        case MQTT_PARSE_VARHDR_POST_TOPICNAME:
             mqtt_properties_parser_ctx_reset(&parser->properties_parser);
             if (!publish->qos) { // PacketID present only for QOS > 0 [MQTT-3.3.2.2]
                 parser->varhdr_state = MQTT_PARSE_VARHDR_PROPS;
