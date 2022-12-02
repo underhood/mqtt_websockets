@@ -630,7 +630,7 @@ struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings)
     client->tx_topic_aliases.stoi_dict = c_rhash_new(0);
     client->tx_topic_aliases.idx_max = UINT16_MAX;
 
-    client->rx_aliases = c_rhash_new(UINT16_MAX << 8);
+    client->rx_aliases = c_rhash_new(UINT16_MAX >> 8);
 
     return client;
 }
