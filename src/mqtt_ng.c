@@ -121,12 +121,13 @@ struct mqtt_property {
     uint8_t id;
     enum mqtt_datatype type;
     union {
-        char *string;
-        char *str_pair[2];
+        char *strings[2];
+        void *bindata;
         uint8_t uint8;
         uint16_t uint16;
         uint32_t uint32;
     } data;
+    size_t bindata_len;
     struct mqtt_property *next;
 };
 
@@ -137,6 +138,10 @@ enum mqtt_properties_parser_state {
     PROPERTY_TYPE_UINT8,
     PROPERTY_TYPE_UINT16,
     PROPERTY_TYPE_UINT32,
+    PROPERTY_TYPE_STR_BIN_LEN,
+    PROPERTY_TYPE_STR,
+    PROPERTY_TYPE_BIN,
+    PROPERTY_TYPE_VBI,
     PROPERTY_NEXT
 };
 
@@ -148,6 +153,7 @@ struct mqtt_properties_parser_ctx {
     uint32_t vbi_length;
     struct mqtt_vbi_parser_ctx vbi_parser_ctx;
     size_t bytes_consumed;
+    int str_idx;
 };
 
 struct mqtt_connack {
@@ -1412,7 +1418,6 @@ static int parse_properties_array(struct mqtt_properties_parser_ctx *ctx, rbuf_t
                 if (!ctx->properties_length)
                     return MQTT_NG_CLIENT_PARSE_DONE;
                 ctx->state = PROPERTY_CREATE;
-                vbi_parser_reset_ctx(&ctx->vbi_parser_ctx);
                 break;
             }
             return rc;
@@ -1442,11 +1447,69 @@ static int parse_properties_array(struct mqtt_properties_parser_ctx *ctx, rbuf_t
                 case MQTT_TYPE_UINT_8:
                     ctx->state = PROPERTY_TYPE_UINT8;
                     break;
+                case MQTT_TYPE_VBI:
+                    ctx->state = PROPERTY_TYPE_VBI;
+                    vbi_parser_reset_ctx(&ctx->vbi_parser_ctx);
+                    break;
+                case MQTT_TYPE_STR:
+                case MQTT_TYPE_STR_PAIR:
+                    ctx->str_idx = 0;
+                    /* FALLTHROUGH */
+                case MQTT_TYPE_BIN:
+                    ctx->state = PROPERTY_TYPE_STR_BIN_LEN;
+                    break;
                 default:
                     mws_error(log, "Unsupported property type %d for property id %d.", (int)ctx->tail->type, (int)ctx->tail->id);
                     return MQTT_NG_CLIENT_PROTOCOL_ERROR;
             }
             break;
+        case PROPERTY_TYPE_STR_BIN_LEN:
+            BUF_READ_CHECK_AT_LEAST(data, sizeof(uint16_t));
+            rbuf_pop(data, (char*)&ctx->tail->bindata_len, sizeof(uint16_t));
+            ctx->tail->bindata_len = be16toh(ctx->tail->bindata_len);
+            ctx->bytes_consumed += 2;
+            switch (ctx->tail->type) {
+                case MQTT_TYPE_BIN:
+                    ctx->state = PROPERTY_TYPE_BIN;
+                    break;
+                case MQTT_TYPE_STR:
+                case MQTT_TYPE_STR_PAIR:
+                    ctx->state = PROPERTY_TYPE_STR;
+                    break;
+                default:
+                    mws_error(log, "Unexpected datatype in PROPERTY_TYPE_STR_BIN_LEN %d", (int)ctx->tail->type);
+                    return MQTT_NG_CLIENT_INTERNAL_ERROR;
+            }
+            break;
+        case PROPERTY_TYPE_STR:
+            BUF_READ_CHECK_AT_LEAST(data, ctx->tail->bindata_len);
+            ctx->tail->data.strings[ctx->str_idx] = mw_malloc(ctx->tail->bindata_len + 1);
+            rbuf_pop(data, ctx->tail->data.strings[ctx->str_idx], ctx->tail->bindata_len);
+            ctx->tail->data.strings[ctx->str_idx][ctx->tail->bindata_len] = 0;
+            ctx->str_idx++;
+            ctx->bytes_consumed += ctx->tail->bindata_len;
+            if (ctx->tail->type == MQTT_TYPE_STR_PAIR && ctx->str_idx < 2) {
+                ctx->state = PROPERTY_TYPE_STR_BIN_LEN;
+                break;
+            }
+            ctx->state = PROPERTY_NEXT;
+            break;
+        case PROPERTY_TYPE_BIN:
+            BUF_READ_CHECK_AT_LEAST(data, ctx->tail->bindata_len);
+            ctx->tail->data.bindata = mw_malloc(ctx->tail->bindata_len);
+            rbuf_pop(data, ctx->tail->data.bindata, ctx->tail->bindata_len);
+            ctx->bytes_consumed += ctx->tail->bindata_len;
+            ctx->state = PROPERTY_NEXT;
+            break;
+        case PROPERTY_TYPE_VBI:
+            rc = vbi_parser_parse(&ctx->vbi_parser_ctx, data, log);
+            if (rc == MQTT_NG_CLIENT_PARSE_DONE) {
+                ctx->tail->data.uint32 = ctx->vbi_parser_ctx.result;
+                ctx->bytes_consumed += ctx->vbi_parser_ctx.bytes;
+                ctx->state = PROPERTY_NEXT;
+                break;
+            }
+            return rc;
         case PROPERTY_TYPE_UINT8:
             BUF_READ_CHECK_AT_LEAST(data, sizeof(uint8_t));
             rbuf_pop(data, (char*)&ctx->tail->data.uint8, sizeof(uint8_t));
