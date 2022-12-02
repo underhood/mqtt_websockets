@@ -113,6 +113,7 @@ enum mqtt_datatype {
     MQTT_TYPE_UINT_32,
     MQTT_TYPE_VBI,
     MQTT_TYPE_STR,
+    MQTT_TYPE_STR_PAIR,
     MQTT_TYPE_BIN
 };
 
@@ -121,6 +122,7 @@ struct mqtt_property {
     enum mqtt_datatype type;
     union {
         char *string;
+        char *str_pair[2];
         uint8_t uint8;
         uint16_t uint16;
         uint32_t uint32;
@@ -1345,15 +1347,36 @@ struct mqtt_property_type {
 };
 
 const struct mqtt_property_type mqtt_property_types[] = {
-    { .id = MQTT_PROP_TOPIC_ALIAS_MAX,    .name = MQTT_PROP_TOPIC_ALIAS_MAX_NAME,    .datatype = MQTT_TYPE_UINT_16 },
-    { .id = MQTT_PROP_TOPIC_ALIAS,        .name = MQTT_PROP_TOPIC_ALIAS_NAME,        .datatype = MQTT_TYPE_UINT_16 },
-    { .id = MQTT_PROP_RECEIVE_MAX,        .name = MQTT_PROP_RECEIVE_MAX_NAME,        .datatype = MQTT_TYPE_UINT_16 },
-    { .id = MQTT_PROP_MAX_PKT_SIZE,       .name = MQTT_PROP_MAX_PKT_SIZE_NAME,       .datatype = MQTT_TYPE_UINT_32 },
-    { .id = MQTT_PROP_RETAIN_AVAIL,       .name = MQTT_PROP_RETAIN_AVAIL_NAME,       .datatype = MQTT_TYPE_UINT_8  },
-    { .id = MQTT_PROP_SHARED_SUB_AVAIL,   .name = MQTT_PROP_SHARED_SUB_AVAIL_NAME,   .datatype = MQTT_TYPE_UINT_8  },
-    { .id = MQTT_PROP_SUB_ID_AVAIL,       .name = MQTT_PROP_SUB_ID_AVAIL_NAME,       .datatype = MQTT_TYPE_UINT_8  },
-    { .id = MQTT_PROP_WILDCARD_SUB_AVAIL, .name = MQTT_PROP_WILDCARD_SUB_AVAIL_NAME, .datatype = MQTT_TYPE_UINT_8  },
-    { .id = 0,                            .name = NULL,                              .datatype = MQTT_TYPE_UNKNOWN }
+    { .id = MQTT_PROP_TOPIC_ALIAS,             .name = MQTT_PROP_TOPIC_ALIAS_NAME,             .datatype = MQTT_TYPE_UINT_16  },
+
+    { .id = MQTT_PROP_PAYLOAD_FMT_INDICATOR,   .name = MQTT_PROP_PAYLOAD_FMT_INDICATOR_NAME,   .datatype = MQTT_TYPE_UINT_8   },
+    { .id = MQTT_PROP_MSG_EXPIRY_INTERVAL,     .name = MQTT_PROP_MSG_EXPIRY_INTERVAL_NAME,     .datatype = MQTT_TYPE_UINT_32  },
+    { .id = MQTT_PROP_CONTENT_TYPE,            .name = MQTT_PROP_CONTENT_TYPE_NAME,            .datatype = MQTT_TYPE_STR      },
+    { .id = MQTT_PROP_RESPONSE_TOPIC,          .name = MQTT_PROP_RESPONSE_TOPIC_NAME,          .datatype = MQTT_TYPE_STR      },
+    { .id = MQTT_PROP_CORRELATION_DATA,        .name = MQTT_PROP_CORRELATION_DATA_NAME,        .datatype = MQTT_TYPE_BIN      },
+    { .id = MQTT_PROP_SUB_IDENTIFIER,          .name = MQTT_PROP_SUB_IDENTIFIER_NAME,          .datatype = MQTT_TYPE_VBI      },
+    { .id = MQTT_PROP_SESSION_EXPIRY_INTERVAL, .name = MQTT_PROP_SESSION_EXPIRY_INTERVAL_NAME, .datatype = MQTT_TYPE_UINT_32  },
+    { .id = MQTT_PROP_ASSIGNED_CLIENT_ID,      .name = MQTT_PROP_ASSIGNED_CLIENT_ID_NAME,      .datatype = MQTT_TYPE_STR      },
+    { .id = MQTT_PROP_SERVER_KEEP_ALIVE,       .name = MQTT_PROP_SERVER_KEEP_ALIVE_NAME,       .datatype = MQTT_TYPE_UINT_16  },
+    { .id = MQTT_PROP_AUTH_METHOD,             .name = MQTT_PROP_AUTH_METHOD_NAME,             .datatype = MQTT_TYPE_STR      },
+    { .id = MQTT_PROP_AUTH_DATA,               .name = MQTT_PROP_AUTH_DATA_NAME,               .datatype = MQTT_TYPE_BIN      },
+    { .id = MQTT_PROP_REQ_PROBLEM_INFO,        .name = MQTT_PROP_REQ_PROBLEM_INFO_NAME,        .datatype = MQTT_TYPE_UINT_8   },
+    { .id = MQTT_PROP_WILL_DELAY_INTERVAL,     .name = MQTT_PROP_WIIL_DELAY_INTERVAL_NAME,     .datatype = MQTT_TYPE_UINT_32  },
+    { .id = MQTT_PROP_REQ_RESP_INFORMATION,    .name = MQTT_PROP_REQ_RESP_INFORMATION_NAME,    .datatype = MQTT_TYPE_UINT_8   },
+    { .id = MQTT_PROP_RESP_INFORMATION,        .name = MQTT_PROP_RESP_INFORMATION_NAME,        .datatype = MQTT_TYPE_STR      },
+    { .id = MQTT_PROP_SERVER_REF,              .name = MQTT_PROP_SERVER_REF_NAME,              .datatype = MQTT_TYPE_STR      },
+    { .id = MQTT_PROP_REASON_STR,              .name = MQTT_PROP_REASON_STR_NAME,              .datatype = MQTT_TYPE_STR      },
+    { .id = MQTT_PROP_RECEIVE_MAX,             .name = MQTT_PROP_RECEIVE_MAX_NAME,             .datatype = MQTT_TYPE_UINT_16  },
+    { .id = MQTT_PROP_TOPIC_ALIAS_MAX,         .name = MQTT_PROP_TOPIC_ALIAS_MAX_NAME,         .datatype = MQTT_TYPE_UINT_16  },
+    // MQTT_PROP_TOPIC_ALIAS is first as it is most often used
+    { .id = MQTT_PROP_MAX_QOS,                 .name = MQTT_PROP_MAX_QOS_NAME,                 .datatype = MQTT_TYPE_UINT_8   },
+    { .id = MQTT_PROP_RETAIN_AVAIL,            .name = MQTT_PROP_RETAIN_AVAIL_NAME,            .datatype = MQTT_TYPE_UINT_8   },
+    { .id = MQTT_PROP_USR,                     .name = MQTT_PROP_USR_NAME,                     .datatype = MQTT_TYPE_STR_PAIR },
+    { .id = MQTT_PROP_MAX_PKT_SIZE,            .name = MQTT_PROP_MAX_PKT_SIZE_NAME,            .datatype = MQTT_TYPE_UINT_32  },
+    { .id = MQTT_PROP_WILDCARD_SUB_AVAIL,      .name = MQTT_PROP_WILDCARD_SUB_AVAIL_NAME,      .datatype = MQTT_TYPE_UINT_8   },
+    { .id = MQTT_PROP_SUB_ID_AVAIL,            .name = MQTT_PROP_SUB_ID_AVAIL_NAME,            .datatype = MQTT_TYPE_UINT_8   },
+    { .id = MQTT_PROP_SHARED_SUB_AVAIL,        .name = MQTT_PROP_SHARED_SUB_AVAIL_NAME,        .datatype = MQTT_TYPE_UINT_8   },
+    { .id = 0,                                 .name = NULL,                                   .datatype = MQTT_TYPE_UNKNOWN  }
 };
 
 static int get_property_type_by_id(uint8_t property_id) {
