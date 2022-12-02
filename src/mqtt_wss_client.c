@@ -565,6 +565,19 @@ inline static int base64_encode_helper(unsigned char *out, int *outl, const unsi
     return 0;
 }
 
+static void SSL_CTX_keylog_cb(const SSL *ssl, const char *line)
+{
+    (void)ssl;
+    FILE *f;
+    f = fopen("sslkeylog", "a");
+    if (!f)
+        return;
+    
+    fputs(line, f);
+    putc('\n', f);
+    fclose(f);
+}
+
 static int http_proxy_connect(mqtt_wss_client client)
 {
     int rc;
@@ -796,6 +809,8 @@ int mqtt_wss_connect(mqtt_wss_client client, char *host, int port, struct mqtt_c
         SSL_CTX_set_verify(client->ssl_ctx, SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE, cert_verify_callback);
     } else
         mws_error(client->log, "SSL Certificate checking completely disabled!!!");
+
+    SSL_CTX_set_keylog_callback(client->ssl_ctx, SSL_CTX_keylog_cb);
 
     client->ssl = SSL_new(client->ssl_ctx);
     if (!(client->ssl_flags & MQTT_WSS_SSL_DONT_CHECK_CERTS)) {
