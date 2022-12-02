@@ -1338,6 +1338,12 @@ static void mqtt_properties_parser_ctx_reset(struct mqtt_properties_parser_ctx *
     while (ctx->head) {
         struct mqtt_property *f = ctx->head;
         ctx->head = ctx->head->next;
+        if (f->type == MQTT_TYPE_STR || f->type == MQTT_TYPE_STR_PAIR)
+            mw_free(f->data.strings[0]);
+        if (f->type == MQTT_TYPE_STR_PAIR)
+            mw_free(f->data.strings[1]);
+        if (f->type == MQTT_TYPE_BIN)
+            mw_free(f->data.bindata);
         mw_free(f);
     }
     ctx->tail = NULL;
