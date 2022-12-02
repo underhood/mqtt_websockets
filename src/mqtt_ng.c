@@ -640,12 +640,26 @@ static inline uint8_t get_control_packet_type(uint8_t first_hdr_byte)
     return first_hdr_byte >> 4;
 }
 
+static inline void mqtt_ng_destroy_rx_alias_hash(struct mqtt_ng_client *client)
+{
+    c_rhash_iter_t i = C_RHASH_ITER_T_INITIALIZER;
+    uint64_t stored_key;
+    void *to_free;
+    while(!c_rhash_iter_uint64_keys(client->rx_aliases, &i, &stored_key)) {
+        c_rhash_get_ptr_by_uint64(client->rx_aliases, stored_key, &to_free);
+        mw_free(to_free);
+    }
+    c_rhash_destroy(client->rx_aliases);
+}
+
 void mqtt_ng_destroy(struct mqtt_ng_client *client)
 {
     transaction_buffer_destroy(&client->main_buffer);
     pthread_mutex_destroy(&client->stats_mutex);
 
     c_rhash_destroy(client->tx_topic_aliases.stoi_dict);
+
+    mqtt_ng_destroy_rx_alias_hash(client);
 
     mw_free(client);
 }
