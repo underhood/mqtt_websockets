@@ -1098,6 +1098,10 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
 
 #ifdef MQTT_WSS_CPUSTATS
     uint64_t t1,t2;
+    uint64_t t_keepalive;
+    uint64_t t_read_socket;
+    uint64_t t_process_websocket;
+    uint64_t t_process_mqtt;
     t1 = mqtt_wss_now_usec(client);
 #endif
 
@@ -1121,7 +1125,7 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
 
 #ifdef MQTT_WSS_CPUSTATS
     t2 = mqtt_wss_now_usec(client);
-    client->stats.time_keepalive += t2 - t1;
+    t_keepalive = t2 - t1;
 #endif
 
     if ((ret = poll(client->poll_fds, 2, timeout_ms >= 0 ? timeout_ms : -1)) < 0) {
@@ -1170,7 +1174,7 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
 
 #ifdef MQTT_WSS_CPUSTATS
     t2 = mqtt_wss_now_usec(client);
-    client->stats.time_keepalive += t2 - t1;
+    t_keepalive += t2 - t1;
 #endif
 
     client->poll_fds[POLLFD_SOCKET].events = 0;
@@ -1203,7 +1207,7 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
 
 #ifdef MQTT_WSS_CPUSTATS
     t1 = mqtt_wss_now_usec(client);
-    client->stats.time_read_socket += t1 - t2;
+    t_read_socket = t1 - t2;
 #endif
 
     ret = ws_client_process(client->ws_client);
@@ -1222,7 +1226,7 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
 
 #ifdef MQTT_WSS_CPUSTATS
     t2 = mqtt_wss_now_usec(client);
-    client->stats.time_process_websocket += t2 - t1;
+    t_process_websocket = t2 - t1;
 #endif
 
     if (handle_mqtt(client))
@@ -1235,7 +1239,7 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
 
 #ifdef MQTT_WSS_CPUSTATS
     t1 = mqtt_wss_now_usec(client);
-    client->stats.time_process_mqtt += t1 - t2;
+    t_process_mqtt = t1 - t2;
 #endif
 
     if ((ptr = rbuf_get_linear_read_range(client->ws_client->buf_write, &size))) {
@@ -1272,7 +1276,13 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
 
 #ifdef MQTT_WSS_CPUSTATS
     t2 = mqtt_wss_now_usec(client);
+    pthread_mutex_lock(&client->stat_lock);
+    client->stats.time_keepalive += t_keepalive;
+    client->stats.time_read_socket += t_read_socket;
+    client->stats.time_process_websocket += t_process_websocket;
+    client->stats.time_process_mqtt += t_process_mqtt;
     client->stats.time_write_socket += t2 - t1;
+    pthread_mutex_unlock(&client->stat_lock);
 #endif
 
     return MQTT_WSS_OK;
