@@ -218,7 +218,6 @@ struct topic_aliases_data {
     c_rhash stoi_dict;
     uint32_t idx_max;
     uint32_t idx_assigned;
-    int used;
 };
 
 struct mqtt_ng_client {
@@ -612,6 +611,7 @@ void transaction_buffer_transaction_rollback(struct transaction_buffer *buf, str
     UNLOCK_HDR_BUFFER(buf);
 }
 
+#define TX_ALIASES_INITIALIZE() c_rhash_new(0)
 #define RX_ALIASES_INITIALIZE() c_rhash_new(UINT16_MAX >> 8)
 struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings)
 {
@@ -629,7 +629,7 @@ struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings)
     if (pthread_mutex_init(&client->stats_mutex, NULL))
         goto err_free_rx_alias;
 
-    client->tx_topic_aliases.stoi_dict = c_rhash_new(0);
+    client->tx_topic_aliases.stoi_dict = TX_ALIASES_INITIALIZE();
     if (client->tx_topic_aliases.stoi_dict == NULL)
         goto err_free_stats_mutex;
     client->tx_topic_aliases.idx_max = UINT16_MAX;
@@ -1005,6 +1005,12 @@ static int mqtt_ng_reset_state_on_clean_start(struct mqtt_ng_client *client)
     buffer_purge(&client->main_buffer.hdr_buffer);
     UNLOCK_HDR_BUFFER(&client->main_buffer);
 
+    mqtt_ng_destroy_tx_alias_hash(client->tx_topic_aliases.stoi_dict);
+    client->tx_topic_aliases.stoi_dict = TX_ALIASES_INITIALIZE();
+    if (client->tx_topic_aliases.stoi_dict == NULL)
+        return 1;
+    client->tx_topic_aliases.idx_assigned = 0;
+
     mqtt_ng_destroy_rx_alias_hash(client->rx_aliases);
     client->rx_aliases = RX_ALIASES_INITIALIZE();
     if (client->rx_aliases == NULL)
@@ -1027,7 +1033,8 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
     if (!clean_start)
         UNLOCK_HDR_BUFFER(&client->main_buffer);
     else
-        mqtt_ng_reset_state_on_clean_start(client);
+        if (mqtt_ng_reset_state_on_clean_start(client))
+            return 1;
 
     client->connect_msg = mqtt_ng_generate_connect(&client->main_buffer, client->log, auth, lwt, clean_start, keep_alive);
     if (client->connect_msg == NULL)
