@@ -999,26 +999,6 @@ fail_rollback:
     return NULL;
 }
 
-// !!! call with HDR_BUFFER LOCKED !!!
-static int mqtt_ng_reset_state_on_clean_start(struct mqtt_ng_client *client)
-{
-    buffer_purge(&client->main_buffer.hdr_buffer);
-    UNLOCK_HDR_BUFFER(&client->main_buffer);
-
-    mqtt_ng_destroy_tx_alias_hash(client->tx_topic_aliases.stoi_dict);
-    client->tx_topic_aliases.stoi_dict = TX_ALIASES_INITIALIZE();
-    if (client->tx_topic_aliases.stoi_dict == NULL)
-        return 1;
-    client->tx_topic_aliases.idx_assigned = 0;
-
-    mqtt_ng_destroy_rx_alias_hash(client->rx_aliases);
-    client->rx_aliases = RX_ALIASES_INITIALIZE();
-    if (client->rx_aliases == NULL)
-        return 1;
-
-    return 0;
-}
-
 int mqtt_ng_connect(struct mqtt_ng_client *client,
                     struct mqtt_auth_properties *auth,
                     struct mqtt_lwt_properties *lwt,
@@ -1030,11 +1010,22 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
 
     LOCK_HDR_BUFFER(&client->main_buffer);
     client->main_buffer.sending_frag = NULL;
-    if (!clean_start)
-        UNLOCK_HDR_BUFFER(&client->main_buffer);
-    else
-        if (mqtt_ng_reset_state_on_clean_start(client))
-            return 1;
+    if (clean_start)
+        buffer_purge(&client->main_buffer.hdr_buffer);
+    UNLOCK_HDR_BUFFER(&client->main_buffer);
+
+    // according to MQTT spec topic aliases should not be persisted
+    // even if clean session is true
+    mqtt_ng_destroy_tx_alias_hash(client->tx_topic_aliases.stoi_dict);
+    client->tx_topic_aliases.stoi_dict = TX_ALIASES_INITIALIZE();
+    if (client->tx_topic_aliases.stoi_dict == NULL)
+        return 1;
+    client->tx_topic_aliases.idx_assigned = 0;
+
+    mqtt_ng_destroy_rx_alias_hash(client->rx_aliases);
+    client->rx_aliases = RX_ALIASES_INITIALIZE();
+    if (client->rx_aliases == NULL)
+        return 1;
 
     client->connect_msg = mqtt_ng_generate_connect(&client->main_buffer, client->log, auth, lwt, clean_start, keep_alive);
     if (client->connect_msg == NULL)
