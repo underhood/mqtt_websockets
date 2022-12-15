@@ -612,16 +612,27 @@ void transaction_buffer_transaction_rollback(struct transaction_buffer *buf, str
     UNLOCK_HDR_BUFFER(buf);
 }
 
+#define RX_ALIASES_INITIALIZE() c_rhash_new(UINT16_MAX >> 8)
 struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings)
 {
     struct mqtt_ng_client *client = mw_calloc(1, sizeof(struct mqtt_ng_client));
     if (client == NULL)
         return NULL;
 
-    if (transaction_buffer_init(&client->main_buffer, HEADER_BUFFER_SIZE)) {
-        mw_free(client);
-        return NULL;
-    }
+    if (transaction_buffer_init(&client->main_buffer, HEADER_BUFFER_SIZE))
+        goto err_free_client;
+
+    client->rx_aliases = RX_ALIASES_INITIALIZE();
+    if (client->rx_aliases == NULL)
+        goto err_free_trx_buf;
+
+    if (pthread_mutex_init(&client->stats_mutex, NULL))
+        goto err_free_rx_alias;
+
+    client->tx_topic_aliases.stoi_dict = c_rhash_new(0);
+    if (client->tx_topic_aliases.stoi_dict == NULL)
+        goto err_free_stats_mutex;
+    client->tx_topic_aliases.idx_max = UINT16_MAX;
 
     // TODO just embed the struct into mqtt_ng_client
     client->parser.received_data = settings->data_in;
@@ -634,13 +645,17 @@ struct mqtt_ng_client *mqtt_ng_init(struct mqtt_ng_init *settings)
     client->connack_callback = settings->connack_callback;
     client->msg_callback = settings->msg_callback;
 
-    pthread_mutex_init(&client->stats_mutex, NULL);
-    client->tx_topic_aliases.stoi_dict = c_rhash_new(0);
-    client->tx_topic_aliases.idx_max = UINT16_MAX;
-
-    client->rx_aliases = c_rhash_new(UINT16_MAX >> 8);
-
     return client;
+
+err_free_stats_mutex:
+    pthread_mutex_destroy(&client->stats_mutex);
+err_free_rx_alias:
+    c_rhash_destroy(client->rx_aliases);
+err_free_trx_buf:
+    transaction_buffer_destroy(&client->main_buffer);
+err_free_client:
+    mw_free(client);
+    return NULL;
 }
 
 static inline uint8_t get_control_packet_type(uint8_t first_hdr_byte)
