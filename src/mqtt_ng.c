@@ -663,16 +663,28 @@ static inline uint8_t get_control_packet_type(uint8_t first_hdr_byte)
     return first_hdr_byte >> 4;
 }
 
-static inline void mqtt_ng_destroy_rx_alias_hash(struct mqtt_ng_client *client)
+static void mqtt_ng_destroy_rx_alias_hash(c_rhash hash)
 {
     c_rhash_iter_t i = C_RHASH_ITER_T_INITIALIZER;
     uint64_t stored_key;
     void *to_free;
-    while(!c_rhash_iter_uint64_keys(client->rx_aliases, &i, &stored_key)) {
-        c_rhash_get_ptr_by_uint64(client->rx_aliases, stored_key, &to_free);
+    while(!c_rhash_iter_uint64_keys(hash, &i, &stored_key)) {
+        c_rhash_get_ptr_by_uint64(hash, stored_key, &to_free);
         mw_free(to_free);
     }
-    c_rhash_destroy(client->rx_aliases);
+    c_rhash_destroy(hash);
+}
+
+static void mqtt_ng_destroy_tx_alias_hash(c_rhash hash)
+{
+    c_rhash_iter_t i = C_RHASH_ITER_T_INITIALIZER;
+    const char *stored_key;
+    void *to_free;
+    while(!c_rhash_iter_str_keys(hash, &i, &stored_key)) {
+        c_rhash_get_ptr_by_str(hash, stored_key, &to_free);
+        mw_free(to_free);
+    }
+    c_rhash_destroy(hash);
 }
 
 void mqtt_ng_destroy(struct mqtt_ng_client *client)
@@ -680,9 +692,8 @@ void mqtt_ng_destroy(struct mqtt_ng_client *client)
     transaction_buffer_destroy(&client->main_buffer);
     pthread_mutex_destroy(&client->stats_mutex);
 
-    c_rhash_destroy(client->tx_topic_aliases.stoi_dict);
-
-    mqtt_ng_destroy_rx_alias_hash(client);
+    mqtt_ng_destroy_tx_alias_hash(client->tx_topic_aliases.stoi_dict);
+    mqtt_ng_destroy_rx_alias_hash(client->rx_aliases);
 
     mw_free(client);
 }
@@ -994,7 +1005,7 @@ static int mqtt_ng_reset_state_on_clean_start(struct mqtt_ng_client *client)
     buffer_purge(&client->main_buffer.hdr_buffer);
     UNLOCK_HDR_BUFFER(&client->main_buffer);
 
-    mqtt_ng_destroy_rx_alias_hash(client);
+    mqtt_ng_destroy_rx_alias_hash(client->rx_aliases);
     client->rx_aliases = RX_ALIASES_INITIALIZE();
     if (client->rx_aliases == NULL)
         return 1;
