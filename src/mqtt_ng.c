@@ -1042,9 +1042,10 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
 
     pthread_mutex_lock(&client->stats_mutex);
     if (clean_start)
-        client->stats.tx_messages_queued++;
-    else
         client->stats.tx_messages_queued = 1;
+    else
+        client->stats.tx_messages_queued++;
+
     client->stats.tx_messages_sent = 0;
     client->stats.rx_messages_rcvd = 0;
     pthread_mutex_unlock(&client->stats_mutex);
@@ -2182,7 +2183,16 @@ int mqtt_ng_set_topic_alias(struct mqtt_ng_client *client, const char *topic)
         mws_error(client->log, "Tx topic alias indexes were exhausted (current version of the library doesn't support reassigning yet. Feel free to contribute.");
         return 0; //0 is not a valid topic alias
     }
-    struct topic_alias_data *alias = mw_malloc(sizeof(struct topic_alias_data));
+
+    struct topic_alias_data *alias;
+    if (!c_rhash_get_ptr_by_str(client->tx_topic_aliases.stoi_dict, topic, (void**)&alias)) {
+        // this is not a problem for library but might be helpful to warn user
+        // as it might indicate bug in their program (but also might be expected)
+        mws_debug(client->log, "%s topic \"%s\" already has alias set. Ignoring.", __FUNCTION__, topic);
+        return alias->idx;
+    }
+
+    alias = mw_malloc(sizeof(struct topic_alias_data));
     alias->idx = ++client->tx_topic_aliases.idx_assigned;
     alias->usage_count = 0;
 
