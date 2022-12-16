@@ -924,9 +924,9 @@ int mqtt_ng_connect(struct mqtt_ng_client *client,
 
     pthread_mutex_lock(&client->stats_mutex);
     if (clean_start)
-        client->stats.tx_messages_queued++;
-    else
         client->stats.tx_messages_queued = 1;
+    else
+        client->stats.tx_messages_queued++;
     client->stats.tx_messages_sent = 0;
     client->stats.rx_messages_rcvd = 0;
     pthread_mutex_unlock(&client->stats_mutex);
