@@ -854,17 +854,33 @@ static int handle_mqtt_internal(mqtt_wss_client client)
     return 0;
 }
 
-#define SEC_TO_MSEC 1000
+#define MSEC_PER_SEC (1000)
+#define MSEC_PER_NSEC (MSEC_PER_SEC * MSEC_PER_SEC)
 // we really just need one variable
 // but wanted to make it bit more readable
-#define since_last_send_s t
-#define keepalive_remaining_ms t
 static inline int64_t t_till_next_keepalive_ms(mqtt_wss_client client)
 {
-    int64_t since_last_send_s = time(NULL) - mqtt_ng_last_send_time(client->mqtt);
-    keepalive_remaining_ms = (client->mqtt_keepalive - since_last_send_s) * SEC_TO_MSEC;
-    t -= ((client->mqtt_keepalive * SEC_TO_MSEC) * 0.20); // send keep alive ahead of time (20% of keepalive value)
-    return t;
+    struct timespec now, diff;
+    struct timespec last_send = mqtt_ng_last_send_time(client->mqtt);
+    #if defined(__APPLE__) || defined(__FreeBSD__)
+    if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+#else
+    if (clock_gettime(CLOCK_BOOTTIME, &now) == -1) {
+#endif
+        mws_error(client->log, "%s clock_gettimte failed", __FUNCTION__);
+        return 0;
+    }
+    diff.tv_sec = now.tv_sec - last_send.tv_sec;
+    if (now.tv_nsec >= last_send.tv_nsec) {
+        diff.tv_nsec = now.tv_nsec - last_send.tv_nsec;
+    } else {
+        diff.tv_nsec = last_send.tv_nsec - now.tv_nsec;
+        diff.tv_sec--;
+    }
+    int64_t since_last_send_ms = (diff.tv_sec * MSEC_PER_SEC) + (diff.tv_nsec / MSEC_PER_NSEC);
+    int64_t keepalive_remaining_ms = (client->mqtt_keepalive * MSEC_PER_SEC) - since_last_send_ms;
+    keepalive_remaining_ms -= ((client->mqtt_keepalive * MSEC_PER_SEC) * 0.20); // send keep alive ahead of time (20% of keepalive value)
+    return keepalive_remaining_ms;
 }
 
 #ifdef MQTT_WSS_CPUSTATS
@@ -901,9 +917,9 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
     // Check user requested TO doesn't interfere with MQTT keep alives
     int64_t till_next_keep_alive = t_till_next_keepalive_ms(client);
     if (client->mqtt_connected && (timeout_ms < 0 || timeout_ms >= till_next_keep_alive)) {
-        #ifdef DEBUG_ULTRA_VERBOSE
-            mws_debug(client->log, "Shortening Timeout requested %d to %lld to ensure keep-alive can be sent", timeout_ms, till_next_keep_alive);
-        #endif
+#ifdef DEBUG_ULTRA_VERBOSE
+            mws_debug(client->log, "Shortening Timeout requested %d to %" PRId64 " to ensure keep-alive can be sent", timeout_ms, till_next_keep_alive);
+#endif
         timeout_ms = till_next_keep_alive;
         t_reduced_keepalive = 1;
     }
@@ -937,13 +953,13 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
     if (ret == 0 && !t_reduced_keepalive)
         return 0;
 
-    till_next_keep_alive = t_till_next_keepalive_ms(client);
-    if (till_next_keep_alive < 10) {
-        mws_debug(client->log, ">>>> till_next_ka2 %" PRId64, till_next_keep_alive);
-        mqtt_ng_ping(client->mqtt);
+    if (client->mqtt_connected) {
+        if (t_till_next_keepalive_ms(client) <= 10) {
+            mqtt_ng_ping(client->mqtt);
 #ifdef DEBUG_ULTRA_VERBOSE
-        mws_debug(client->log, "Forcing MQTT Ping/keep-alive");
+            mws_debug(client->log, "Forcing MQTT Ping/keep-alive");
 #endif
+        }
     }
 
 #ifdef MQTT_WSS_CPUSTATS

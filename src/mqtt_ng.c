@@ -236,7 +236,7 @@ struct mqtt_ng_client {
     void *user_ctx;
 
     // time when last fragment of MQTT message was sent
-    time_t time_of_last_send;
+    struct timespec time_of_last_send;
 
     struct mqtt_ng_parser parser;
 
@@ -1950,7 +1950,13 @@ static int send_fragment(struct mqtt_ng_client *client) {
         return -1;
 
     if (frag->flags & BUFFER_FRAG_MQTT_PACKET_TAIL) {
-        client->time_of_last_send = time(NULL);
+#if defined(__APPLE__) || defined(__FreeBSD__)
+        if (clock_gettime(CLOCK_MONOTONIC, &client->time_of_last_send) == -1) {
+#else
+        if (clock_gettime(CLOCK_BOOTTIME, &client->time_of_last_send) == -1) {
+#endif
+            ERROR("clock_gettimte failed");
+        }
         pthread_mutex_lock(&client->stats_mutex);
         if (client->main_buffer.sending_frag != &ping_frag)
             client->stats.tx_messages_queued--;
@@ -2150,7 +2156,7 @@ int mqtt_ng_sync(struct mqtt_ng_client *client)
     return 0;
 }
 
-time_t mqtt_ng_last_send_time(struct mqtt_ng_client *client)
+struct timespec mqtt_ng_last_send_time(struct mqtt_ng_client *client)
 {
     return client->time_of_last_send;
 }
