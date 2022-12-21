@@ -1016,19 +1016,29 @@ void mqtt_wss_disconnect(mqtt_wss_client client, int timeout_ms)
     client->sockfd = -1;
 }
 
-static inline void mqtt_wss_wakeup(mqtt_wss_client client)
+static inline int mqtt_wss_wakeup(mqtt_wss_client client)
 {
 #ifdef DEBUG_ULTRA_VERBOSE
     mws_debug(client->log, "mqtt_wss_wakup - forcing wake up of main loop");
 #endif
-    write(client->write_notif_pipe[PIPE_WRITE_END], " ", 1);
+    ssize_t ret = write(client->write_notif_pipe[PIPE_WRITE_END], " ", 1);
+    if (ret < 0) {
+        mws_error(client->log, "%s write returned error: %s", __FUNCTION__, strerror(errno));
+        return 1;
+    }
+    return 0;
 }
 
 #define THROWAWAY_BUF_SIZE 32
 char throwaway[THROWAWAY_BUF_SIZE];
-static inline void util_clear_pipe(int fd)
+static inline int util_clear_pipe(int fd, mqtt_wss_log_ctx_t log)
 {
-    (void)read(fd, throwaway, THROWAWAY_BUF_SIZE);
+    ssize_t ret = read(fd, throwaway, THROWAWAY_BUF_SIZE);
+    if (ret <= 0) {
+        mws_error(log, "%s read returned %zd, errno = %s", __FUNCTION__, ret, strerror(errno));
+        return 1;
+    }
+    return 0;
 }
 
 static inline void set_socket_pollfds(mqtt_wss_client client, int ssl_ret) {
@@ -1276,8 +1286,9 @@ int mqtt_wss_service(mqtt_wss_client client, int timeout_ms)
         }
     }
 
-    if(client->poll_fds[POLLFD_PIPE].revents & POLLIN)
-        util_clear_pipe(client->write_notif_pipe[PIPE_READ_END]);
+    if ((client->poll_fds[POLLFD_PIPE].revents & POLLIN) &&
+        util_clear_pipe(client->write_notif_pipe[PIPE_READ_END], client->log))
+        return MQTT_WSS_ERR_SYSCALL;
 
 #ifdef MQTT_WSS_CPUSTATS
     t2 = mqtt_wss_now_usec(client);
@@ -1362,7 +1373,9 @@ static int _mqtt_wss_publish_pid(mqtt_wss_client client, const char *topic, cons
         mws_debug(client->log, "Publishing Message to topic \"%s\" with size %d as packet_id=%d", topic, msg_len, *packet_id);
 #endif
 
-    mqtt_wss_wakeup(client);
+    if (mqtt_wss_wakeup(client))
+        return 1;
+
     return rc;
 }
 
@@ -1510,7 +1523,10 @@ int mqtt_wss_publish5(mqtt_wss_client client,
         mqtt_flags |= MQTT_PUBLISH_RETAIN;
 
     int rc = mqtt_ng_publish(client->mqtt.mqtt_ctx, topic, topic_free, msg, msg_free, msg_len, mqtt_flags, packet_id);
-    mqtt_wss_wakeup(client);
+
+    if (mqtt_wss_wakeup(client))
+        return 1;
+
     return rc;
 }
 
@@ -1543,7 +1559,9 @@ int mqtt_wss_subscribe(mqtt_wss_client client, char *topic, int max_qos_level)
         }
     }
 
-    mqtt_wss_wakeup(client);
+    if (mqtt_wss_wakeup(client))
+        return 1;
+
     return 0;
 }
 
