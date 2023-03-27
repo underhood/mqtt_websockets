@@ -30,15 +30,17 @@
 #include <netinet/tcp.h> //TCP_NODELAY
 #include <netdb.h>
 
+#ifndef NETDATA_USE_WOLFSSL
 #include <openssl/err.h>
 #include <openssl/ssl.h>
+#endif
 
 #define PIPE_READ_END  0
 #define PIPE_WRITE_END 1
 #define POLLFD_SOCKET  0
 #define POLLFD_PIPE    1
 
-#if (OPENSSL_VERSION_NUMBER < OPENSSL_VERSION_110) && (SSLEAY_VERSION_NUMBER >= OPENSSL_VERSION_097)
+#if defined(OPENSSL_VERSION_NUMBER) && (OPENSSL_VERSION_NUMBER < OPENSSL_VERSION_110) && (SSLEAY_VERSION_NUMBER >= OPENSSL_VERSION_097)
 #include <openssl/conf.h>
 #endif
 
