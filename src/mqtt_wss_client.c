@@ -34,6 +34,8 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #elif defined(NETDATA_USE_WOLFSSL)
+#include <wolfssl/options.h>
+#include <wolfssl/ssl.h>
 #include <wolfssl/openssl/err.h>
 #include <wolfssl/openssl/ssl.h>
 #endif
@@ -626,10 +628,11 @@ int mqtt_wss_connect(mqtt_wss_client client, char *host, int port, struct mqtt_c
         if (http_proxy_connect(client))
             return -4;
 
+#ifndef NETDATA_USE_WOLFSSL
 #if OPENSSL_VERSION_NUMBER < OPENSSL_VERSION_110
 #if (SSLEAY_VERSION_NUMBER >= OPENSSL_VERSION_097)
     OPENSSL_config(NULL);
-#endif
+#endif // (SSLEAY_VERSION_NUMBER >= OPENSSL_VERSION_097)
     SSL_load_error_strings();
     SSL_library_init();
 #else
@@ -637,7 +640,13 @@ int mqtt_wss_connect(mqtt_wss_client client, char *host, int port, struct mqtt_c
         mws_error(client->log, "Failed to initialize SSL");
         return -1;
     };
-#endif
+#endif //OPENSSL_VERSION_NUMBER < OPENSSL_VERSION_110
+#else
+    if (wolfSSL_Init() != SSL_SUCCESS) {
+        mws_error(client->log, "Failed to initialize SSL");
+        return -1;
+    }
+#endif // NETDATA_USE_WOLFSSL
 
     // free SSL structs from possible previous connections
     if (client->ssl)
