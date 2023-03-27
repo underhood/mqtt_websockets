@@ -33,6 +33,9 @@
 #ifndef NETDATA_USE_WOLFSSL
 #include <openssl/err.h>
 #include <openssl/ssl.h>
+#elif defined(NETDATA_USE_WOLFSSL)
+#include <wolfssl/openssl/err.h>
+#include <wolfssl/openssl/ssl.h>
 #endif
 
 #define PIPE_READ_END  0

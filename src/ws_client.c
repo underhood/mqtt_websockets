@@ -19,6 +19,8 @@
 
 #ifndef NETDATA_USE_WOLFSSL
 #include <openssl/evp.h>
+#elif defined(NETDATA_USE_WOLFSSL)
+#include <wolfssl/openssl/evp.h>
 #endif
 
 #include "ws_client.h"
