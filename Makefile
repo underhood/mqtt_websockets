@@ -13,6 +13,7 @@
 
 CC = gcc -std=gnu99
 CFLAGS = -Wextra -Wall `pkg-config --cflags openssl` `pkg-config --cflags libcrypto`
+LDFLAGS = `pkg-config --libs openssl`
 BUILD_DIR = build
 
 INCLUDES = -Isrc/include -Ic-rbuf/include -Ic_rhash/include -Imqtt/include
@@ -47,7 +48,7 @@ libmqttwebsockets.a: $(BUILD_DIR)/mqtt_wss_client.o $(BUILD_DIR)/ws_client.o c-r
 	ar rcs libmqttwebsockets.a $(BUILD_DIR)/mqtt_wss_client.o $(BUILD_DIR)/ws_client.o c-rbuf/build/ringbuffer.o $(BUILD_DIR)/c_rhash.o $(BUILD_DIR)/mqtt_wss_log.o $(BUILD_DIR)/mqtt_ng.o $(BUILD_DIR)/common_public.o
 
 test: $(BUILD_DIR)/test.o libmqttwebsockets.a
-	$(CC) -o test $(BUILD_DIR)/test.o libmqttwebsockets.a `pkg-config --libs openssl` -lpthread $(CFLAGS)
+	$(CC) -o test $(BUILD_DIR)/test.o libmqttwebsockets.a $(LDFLAGS) -lpthread $(CFLAGS)
 
 clean:
 	rm -f $(BUILD_DIR)/*
