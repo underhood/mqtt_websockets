@@ -30,10 +30,10 @@
 #include <netinet/tcp.h> //TCP_NODELAY
 #include <netdb.h>
 
-#ifndef NETDATA_USE_WOLFSSL
+#if defined(ENABLE_HTTPS_WITH_OPENSSL)
 #include <openssl/err.h>
 #include <openssl/ssl.h>
-#elif defined(NETDATA_USE_WOLFSSL)
+#elif defined(ENABLE_HTTPS_WITH_WOLFSSL)
 #include <wolfssl/options.h>
 #include <wolfssl/ssl.h>
 #include <wolfssl/openssl/err.h>
@@ -628,7 +628,7 @@ int mqtt_wss_connect(mqtt_wss_client client, char *host, int port, struct mqtt_c
         if (http_proxy_connect(client))
             return -4;
 
-#ifndef NETDATA_USE_WOLFSSL
+#if defined(ENABLE_HTTPS_WITH_OPENSSL)
 #if OPENSSL_VERSION_NUMBER < OPENSSL_VERSION_110
 #if (SSLEAY_VERSION_NUMBER >= OPENSSL_VERSION_097)
     OPENSSL_config(NULL);
@@ -641,12 +641,12 @@ int mqtt_wss_connect(mqtt_wss_client client, char *host, int port, struct mqtt_c
         return -1;
     };
 #endif //OPENSSL_VERSION_NUMBER < OPENSSL_VERSION_110
-#else
+#elif defined(ENABLE_HTTPS_WITH_WOLFSSL)
     if (wolfSSL_Init() != SSL_SUCCESS) {
         mws_error(client->log, "Failed to initialize SSL");
         return -1;
     }
-#endif // NETDATA_USE_WOLFSSL
+#endif // ENABLE_HTTPS_WITH_WOLFSSL
 
     // free SSL structs from possible previous connections
     if (client->ssl)

@@ -17,9 +17,9 @@
 #include <errno.h>
 #include <ctype.h>
 
-#ifndef NETDATA_USE_WOLFSSL
+#if defined(ENABLE_HTTPS_WITH_OPENSSL)
 #include <openssl/evp.h>
-#elif defined(NETDATA_USE_WOLFSSL)
+#elif defined(ENABLE_HTTPS_WITH_WOLFSSL)
 #include <wolfssl/options.h>
 #include <wolfssl/openssl/evp.h>
 #endif
