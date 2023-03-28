@@ -20,6 +20,7 @@
 #ifndef NETDATA_USE_WOLFSSL
 #include <openssl/evp.h>
 #elif defined(NETDATA_USE_WOLFSSL)
+#include <wolfssl/options.h>
 #include <wolfssl/openssl/evp.h>
 #endif
 
