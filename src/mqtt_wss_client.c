@@ -30,24 +30,12 @@
 #include <netinet/tcp.h> //TCP_NODELAY
 #include <netdb.h>
 
-#if defined(ENABLE_HTTPS_WITH_OPENSSL)
-#include <openssl/err.h>
-#include <openssl/ssl.h>
-#elif defined(ENABLE_HTTPS_WITH_WOLFSSL)
-#include <wolfssl/options.h>
-#include <wolfssl/ssl.h>
-#include <wolfssl/openssl/err.h>
-#include <wolfssl/openssl/ssl.h>
-#endif
+#include "mqtt_ssl.h"
 
 #define PIPE_READ_END  0
 #define PIPE_WRITE_END 1
 #define POLLFD_SOCKET  0
 #define POLLFD_PIPE    1
-
-#if defined(OPENSSL_VERSION_NUMBER) && (OPENSSL_VERSION_NUMBER < OPENSSL_VERSION_110) && (SSLEAY_VERSION_NUMBER >= OPENSSL_VERSION_097)
-#include <openssl/conf.h>
-#endif
 
 //TODO MQTT_PUBLISH_RETAIN should not be needed anymore
 #define MQTT_PUBLISH_RETAIN 0x01

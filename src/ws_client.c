@@ -17,12 +17,7 @@
 #include <errno.h>
 #include <ctype.h>
 
-#if defined(ENABLE_HTTPS_WITH_OPENSSL)
-#include <openssl/evp.h>
-#elif defined(ENABLE_HTTPS_WITH_WOLFSSL)
-#include <wolfssl/options.h>
-#include <wolfssl/openssl/evp.h>
-#endif
+#include "mqtt_ssl.h"
 
 #include "ws_client.h"
 #include "common_internal.h"
