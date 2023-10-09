@@ -447,8 +447,7 @@ static void buffer_purge(struct header_buffer *buf) {
     buf->tail_frag = NULL;
 }
 
-#define FRAG_MEMALIGN 8
-#define FRAG_PADDING(addr) ((FRAG_MEMALIGN - ((uintptr_t)addr % FRAG_MEMALIGN)) % FRAG_MEMALIGN)
+#define FRAG_PADDING(addr) ((MQTT_WSS_FRAG_MEMALIGN - ((uintptr_t)addr % MQTT_WSS_FRAG_MEMALIGN)) % MQTT_WSS_FRAG_MEMALIGN)
 static struct buffer_fragment *buffer_new_frag(struct header_buffer *buf, buffer_frag_flag_t flags)
 {
     uint8_t padding = FRAG_PADDING(buf->tail);
