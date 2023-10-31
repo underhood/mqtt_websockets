@@ -3,6 +3,9 @@
 Library to connect MQTT client over Websockets Secure (WSS).
 Documentation is pending. Best way to figure out how to use the library it to look at [`netdata/netdata`](https://github.com/netdata/netdata/) where it is used in production (ACLK component used for Cloud/Agent communication) and/or `src\test.c`.
 
+Uses git submodules terefore use recursive git clone
+`git clone --recurse-submodules https://github.com/underhood/mqtt_websockets.git`
+
 ## License
 
 The Project is released under GPL v3 license. See [License](LICENSE)
