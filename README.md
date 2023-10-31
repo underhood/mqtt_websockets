@@ -1,7 +1,7 @@
 # mqtt_websockets
 
 Library to connect MQTT client over Websockets Secure (WSS).
-Documentation is pending. Best way to figure out how to use the library it to look at `src\test.c`.
+Documentation is pending. Best way to figure out how to use the library it to look at `netdata/netdata` where it is used in production and/or `src\test.c`.
 
 ## License
 
